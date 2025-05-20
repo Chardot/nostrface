@@ -78,12 +78,49 @@ class ProfileScreen extends ConsumerWidget {
                         icon: Icon(isFollowed ? Icons.favorite : Icons.favorite_border),
                         color: isFollowed ? Colors.red : null,
                         onPressed: () async {
+                          // Check if user is logged in
+                          final isLoggedIn = await ref.read(isLoggedInProvider.future);
+                          
+                          if (!isLoggedIn && context.mounted) {
+                            // Show dialog to prompt user to log in
+                            showDialog(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text('Login Required'),
+                                content: const Text(
+                                  'You need to be logged in to follow profiles. Would you like to log in now?'
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.of(context).pop(),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () {
+                                      Navigator.of(context).pop();
+                                      context.go('/login');
+                                    },
+                                    child: const Text('Log In'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            return;
+                          }
+                          
                           // Follow/unfollow user
                           final result = await ref.read(followProfileProvider(profileId).future);
+                          
                           if (result && context.mounted) {
+                            // Get profile name for feedback
+                            final profileName = profile.displayNameOrName;
+                            
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text(isFollowed ? 'Profile unfollowed!' : 'Profile followed!'),
+                                content: Text(
+                                  isFollowed ? 'Unfollowed $profileName' : 'Following $profileName'
+                                ),
+                                duration: const Duration(seconds: 2),
                               ),
                             );
                           }
