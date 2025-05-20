@@ -9,7 +9,8 @@ import 'package:nostrface/core/services/profile_service.dart';
 import 'package:nostrface/features/profile_discovery/presentation/widgets/profile_card.dart';
 
 // Provider to track the current profile index in the swiper
-final currentProfileIndexProvider = StateProvider<int>((ref) => 0);
+// Using autoDispose: false to ensure it persists across widget rebuilds
+final currentProfileIndexProvider = StateProvider<int>((ref) => 0, name: 'currentProfileIndex');
 
 class DiscoveryScreen extends ConsumerStatefulWidget {
   const DiscoveryScreen({Key? key}) : super(key: key);

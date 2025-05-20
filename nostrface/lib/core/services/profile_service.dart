@@ -965,17 +965,29 @@ class ProfileBufferService {
   }
 }
 
+/// We'll use a singleton for the buffer service to ensure it persists across widget rebuilds
+/// and doesn't get recreated with state changes
+class ProfileBufferServiceSingleton {
+  static ProfileBufferService? _instance;
+  
+  static ProfileBufferService getInstance(ProfileService profileService) {
+    _instance ??= ProfileBufferService(profileService);
+    return _instance!;
+  }
+}
+
 /// Provider for the profile buffer service
 final profileBufferServiceProvider = Provider<ProfileBufferService>((ref) {
   final profileService = ref.watch(profileServiceProvider);
-  return ProfileBufferService(profileService);
+  // Use singleton pattern to ensure same instance persists
+  return ProfileBufferServiceSingleton.getInstance(profileService);
 });
 
-/// Stream provider for buffered profiles
+/// Stream provider for buffered profiles with auto-dispose disabled
 final bufferedProfilesProvider = StreamProvider<List<NostrProfile>>((ref) {
   final bufferService = ref.watch(profileBufferServiceProvider);
   return bufferService.profilesStream;
-});
+}).autoDispose(keepAlive: true); // Keep the provider alive across rebuilds
 
 /// Provider to check if more profiles are being fetched
 final isFetchingMoreProfilesProvider = Provider<bool>((ref) {
