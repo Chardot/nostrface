@@ -571,6 +571,73 @@ class ProfileService {
     }
   }
   
+  /// Fetch recent text notes from a specific user
+  Future<List<NostrEvent>> getUserNotes(String pubkey, {int limit = 10}) async {
+    if (kDebugMode) {
+      print('Fetching notes for user: $pubkey, limit: $limit');
+    }
+    
+    // If we have no active relay connections, attempt to reconnect
+    if (_relayServices.isEmpty) {
+      await _initializeRelays();
+      
+      if (_relayServices.isEmpty) {
+        if (kDebugMode) {
+          print('No relay connections available for fetching notes');
+        }
+        return [];
+      }
+    }
+    
+    // Build a filter for Kind 1 (text notes) events from this user
+    final filter = {
+      'authors': [pubkey],
+      'kinds': [NostrEvent.textNoteKind],
+      'limit': limit,
+    };
+    
+    // Query multiple relays in parallel
+    List<Future<List<NostrEvent>>> queries = [];
+    for (final relay in _relayServices) {
+      if (relay.isConnected) {
+        queries.add(relay.subscribe(filter, timeout: const Duration(seconds: 5)));
+      }
+    }
+    
+    if (queries.isEmpty) {
+      if (kDebugMode) {
+        print('No connected relays to query for notes');
+      }
+      return [];
+    }
+    
+    // Wait for all queries to complete
+    final results = await Future.wait(queries, eagerError: false);
+    
+    // Combine all results and remove duplicates
+    final Map<String, NostrEvent> uniqueEvents = {};
+    
+    for (final events in results) {
+      for (final event in events) {
+        // Keep the most recent event if we have duplicates
+        if (!uniqueEvents.containsKey(event.id) || 
+            uniqueEvents[event.id]!.created_at < event.created_at) {
+          uniqueEvents[event.id] = event;
+        }
+      }
+    }
+    
+    // Sort events by creation time (newest first)
+    final sortedEvents = uniqueEvents.values.toList()
+      ..sort((a, b) => b.created_at.compareTo(a.created_at));
+    
+    if (kDebugMode) {
+      print('Found ${sortedEvents.length} notes for user: $pubkey');
+    }
+    
+    return sortedEvents.take(limit).toList();
+  }
+  
   /// Load the list of followed profiles from local storage
   Future<void> _loadFollowedProfiles() async {
     try {

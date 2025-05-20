@@ -8,17 +8,9 @@ import 'package:nostrface/core/services/profile_service.dart';
 
 // Provider for fetching recent notes from a user
 final userNotesProvider = FutureProvider.family<List<NostrEvent>, String>((ref, pubkey) async {
-  // In a full implementation, this would fetch notes from relays
-  // For now, return a placeholder list of notes
-  return List.generate(5, (index) => NostrEvent(
-    id: 'note_$index',
-    pubkey: pubkey,
-    created_at: DateTime.now().subtract(Duration(days: index)).millisecondsSinceEpoch ~/ 1000,
-    kind: NostrEvent.textNoteKind,
-    tags: [],
-    content: 'This is sample post #$index with some content to display.',
-    sig: '',
-  ));
+  // Fetch real notes from the profile service
+  final profileService = ref.watch(profileServiceProvider);
+  return await profileService.getUserNotes(pubkey, limit: 10);
 });
 
 class ProfileScreen extends ConsumerWidget {
@@ -78,12 +70,24 @@ class ProfileScreen extends ConsumerWidget {
                       ),
                 ),
                 actions: [
-                  IconButton(
-                    icon: const Icon(Icons.favorite_border),
-                    onPressed: () {
-                      // TODO: Follow user
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Profile followed!')),
+                  Consumer(
+                    builder: (context, ref, child) {
+                      final isFollowed = ref.watch(isProfileFollowedProvider(profileId));
+                      
+                      return IconButton(
+                        icon: Icon(isFollowed ? Icons.favorite : Icons.favorite_border),
+                        color: isFollowed ? Colors.red : null,
+                        onPressed: () async {
+                          // Follow/unfollow user
+                          final result = await ref.read(followProfileProvider(profileId).future);
+                          if (result && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(isFollowed ? 'Profile unfollowed!' : 'Profile followed!'),
+                              ),
+                            );
+                          }
+                        },
                       );
                     },
                   ),
@@ -204,7 +208,7 @@ class ProfileScreen extends ConsumerWidget {
                                 ),
                                 const SizedBox(height: 12),
                                 Text(
-                                  note.content,
+                                  _formatContent(note.content),
                                   style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                                 const SizedBox(height: 12),
@@ -214,19 +218,25 @@ class ProfileScreen extends ConsumerWidget {
                                     IconButton(
                                       icon: const Icon(Icons.favorite_border),
                                       onPressed: () {
-                                        // TODO: Like post
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('Like feature coming soon!')),
+                                        );
                                       },
                                     ),
                                     IconButton(
                                       icon: const Icon(Icons.repeat),
                                       onPressed: () {
-                                        // TODO: Repost
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('Repost feature coming soon!')),
+                                        );
                                       },
                                     ),
                                     IconButton(
                                       icon: const Icon(Icons.share),
                                       onPressed: () {
-                                        // TODO: Share post
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('Share feature coming soon!')),
+                                        );
                                       },
                                     ),
                                   ],
@@ -280,7 +290,37 @@ class ProfileScreen extends ConsumerWidget {
   }
 
   String _formatDate(DateTime date) {
-    // Simple date formatting for demonstration
-    return '${date.day}/${date.month}/${date.year}';
+    final now = DateTime.now();
+    final difference = now.difference(date);
+    
+    if (difference.inSeconds < 60) {
+      return '${difference.inSeconds}s ago';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inDays < 30) {
+      return '${difference.inDays}d ago';
+    } else if (difference.inDays < 365) {
+      final months = (difference.inDays / 30).floor();
+      return '${months}mo ago';
+    } else {
+      final years = (difference.inDays / 365).floor();
+      return '${years}y ago';
+    }
+  }
+  
+  String _formatContent(String content) {
+    // Remove excessive whitespace
+    String formatted = content.trim().replaceAll(RegExp(r'\n\s*\n\s*\n'), '\n\n');
+    
+    // Convert URLs to clickable format (in a real app, you would add link rendering)
+    // This is a simple regex for URLs - a real implementation would be more robust
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'https?:\/\/[^\s]+'),
+      (match) => '[${match.group(0)}]',
+    );
+    
+    return formatted;
   }
 }
