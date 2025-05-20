@@ -983,11 +983,11 @@ final profileBufferServiceProvider = Provider<ProfileBufferService>((ref) {
   return ProfileBufferServiceSingleton.getInstance(profileService);
 });
 
-/// Stream provider for buffered profiles with auto-dispose disabled
+/// Stream provider for buffered profiles with no auto-dispose
 final bufferedProfilesProvider = StreamProvider<List<NostrProfile>>((ref) {
   final bufferService = ref.watch(profileBufferServiceProvider);
   return bufferService.profilesStream;
-}).autoDispose(keepAlive: true); // Keep the provider alive across rebuilds
+});
 
 /// Provider to check if more profiles are being fetched
 final isFetchingMoreProfilesProvider = Provider<bool>((ref) {
