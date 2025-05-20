@@ -22,23 +22,71 @@ class ProfileService {
   
   /// Initialize connections to relays
   Future<void> _initializeRelays() async {
-    for (final relayUrl in _relayUrls) {
-      final relay = NostrRelayService(relayUrl);
+    if (kDebugMode) {
+      print('Initializing connections to ${_relayUrls.length} relays');
+    }
+    
+    // In web, we'll try to connect to all relays, but use a timeout to avoid waiting too long
+    final connectFutures = _relayUrls.map((relayUrl) async {
       try {
-        await relay.connect();
-        _relayServices.add(relay);
+        if (kDebugMode) {
+          print('Attempting to connect to relay: $relayUrl');
+        }
         
-        // Subscribe to profile updates
-        relay.eventStream.listen((event) {
-          if (event.kind == NostrEvent.metadataKind) {
-            _handleProfileMetadata(event);
+        final relay = NostrRelayService(relayUrl);
+        final connected = await relay.connect().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            if (kDebugMode) {
+              print('Connection timeout for relay: $relayUrl');
+            }
+            return false;
+          },
+        );
+        
+        if (connected) {
+          if (kDebugMode) {
+            print('Successfully connected to relay: $relayUrl');
           }
-        });
+          
+          _relayServices.add(relay);
+          
+          // Subscribe to profile updates
+          relay.eventStream.listen((event) {
+            if (event.kind == NostrEvent.metadataKind) {
+              _handleProfileMetadata(event);
+            }
+          });
+          
+          return true;
+        }
+        
+        return false;
       } catch (e) {
         if (kDebugMode) {
           print('Failed to connect to relay $relayUrl: $e');
         }
+        return false;
       }
+    }).toList();
+    
+    // Wait for all connection attempts to complete, but with overall timeout
+    final results = await Future.wait(
+      connectFutures,
+      eagerError: false,
+    ).timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        if (kDebugMode) {
+          print('Relay initialization timeout reached, proceeding with available connections');
+        }
+        return List<bool>.filled(connectFutures.length, false);
+      },
+    );
+    
+    final connectedCount = results.where((result) => result).length;
+    if (kDebugMode) {
+      print('Connected to $connectedCount out of ${_relayUrls.length} relays');
     }
   }
   
@@ -173,21 +221,104 @@ class ProfileService {
     List<NostrProfile> discoveredProfiles = [];
     Set<String> seenPubkeys = {};
     
-    // Build a filter for Kind 0 (metadata) events
-    final filter = {
-      'kinds': [NostrEvent.metadataKind],
-      'limit': limit * 2, // Ask for more than we need in case some fail
-    };
-    
-    // Query multiple relays in parallel
-    List<Future<List<NostrEvent>>> queries = [];
-    for (final relay in _relayServices) {
-      if (relay.isConnected) {
-        queries.add(relay.subscribe(filter, timeout: const Duration(seconds: 8)));
+    // If we have no active relay connections, attempt to reconnect
+    if (_relayServices.isEmpty) {
+      await _initializeRelays();
+      
+      // If still no relays, try to use cached profiles
+      if (_relayServices.isEmpty) {
+        if (kDebugMode) {
+          print('No relay connections available, using cached profiles if available');
+        }
+        
+        try {
+          final profileBox = await Hive.openBox<String>('profiles');
+          if (profileBox.isNotEmpty) {
+            // Return some random cached profiles
+            final cachedKeys = profileBox.keys.toList()..shuffle();
+            final keysToUse = cachedKeys.take(limit).toList();
+            
+            for (final key in keysToUse) {
+              final profileJson = profileBox.get(key.toString());
+              if (profileJson != null) {
+                try {
+                  final profile = NostrProfile.fromJson(jsonDecode(profileJson));
+                  discoveredProfiles.add(profile);
+                } catch (e) {
+                  if (kDebugMode) {
+                    print('Error parsing cached profile: $e');
+                  }
+                }
+              }
+            }
+            
+            if (discoveredProfiles.isNotEmpty) {
+              if (kDebugMode) {
+                print('Returning ${discoveredProfiles.length} cached profiles');
+              }
+              return discoveredProfiles;
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('Error accessing profile cache: $e');
+          }
+        }
       }
     }
     
-    final results = await Future.wait(queries);
+    // Build a filter for Kind 0 (metadata) events
+    final filter = {
+      'kinds': [NostrEvent.metadataKind],
+      'limit': limit * 3, // Ask for more than we need in case some fail
+    };
+    
+    // Query multiple relays in parallel with increased timeout
+    List<Future<List<NostrEvent>>> queries = [];
+    for (final relay in _relayServices) {
+      if (relay.isConnected) {
+        if (kDebugMode) {
+          print('Fetching profiles from ${relay.relayUrl}');
+        }
+        queries.add(relay.subscribe(filter, timeout: const Duration(seconds: 15)));
+      }
+    }
+    
+    // Handle empty queries case
+    if (queries.isEmpty) {
+      if (kDebugMode) {
+        print('No connected relays to query');
+      }
+      return [];
+    }
+    
+    // Use Future.wait with a timeout so one slow relay doesn't block everything
+    List<List<NostrEvent>> results = [];
+    try {
+      results = await Future.wait(
+        queries,
+        eagerError: false, // Continue even if some futures fail
+      ).timeout(
+        const Duration(seconds: 20),
+        onTimeout: () {
+          if (kDebugMode) {
+            print('Query timeout reached, processing available results');
+          }
+          // Just return an empty list on timeout
+          return <List<NostrEvent>>[];
+        },
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error fetching profiles: $e');
+      }
+      // Return empty results on error
+      results = <List<NostrEvent>>[];
+    }
+    
+    if (kDebugMode) {
+      print('Got results from ${results.length} relays');
+    }
     
     // Process the results
     for (final events in results) {
@@ -204,15 +335,12 @@ class ProfileService {
               // Cache the profile
               _profiles[profile.pubkey] = profile;
               
-              // Save to storage
-              try {
-                final profileBox = await Hive.openBox<String>('profiles');
-                await profileBox.put(profile.pubkey, jsonEncode(profile.toJson()));
-              } catch (e) {
+              // Save to storage asynchronously
+              _saveProfileToStorage(profile).catchError((e) {
                 if (kDebugMode) {
                   print('Error saving profile to storage: $e');
                 }
-              }
+              });
               
               if (discoveredProfiles.length >= limit) {
                 break;
@@ -231,7 +359,24 @@ class ProfileService {
       }
     }
     
+    if (kDebugMode) {
+      print('Returning ${discoveredProfiles.length} discovered profiles');
+    }
+    
     return discoveredProfiles;
+  }
+  
+  /// Save a profile to storage asynchronously
+  Future<void> _saveProfileToStorage(NostrProfile profile) async {
+    try {
+      final profileBox = await Hive.openBox<String>('profiles');
+      await profileBox.put(profile.pubkey, jsonEncode(profile.toJson()));
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error saving profile to storage: $e');
+      }
+      rethrow;
+    }
   }
 }
 

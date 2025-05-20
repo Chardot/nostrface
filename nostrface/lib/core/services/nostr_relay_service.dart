@@ -23,17 +23,13 @@ class NostrRelayService {
   /// Connect to the relay
   Future<bool> connect() async {
     if (_isConnected) return true;
-
-    // In web context, we'll use mock data for now to avoid WebSocket issues
-    if (kIsWeb) {
-      if (kDebugMode) {
-        print('Web mode: Using mock data instead of WebSocket connection to $relayUrl');
-      }
-      _isConnected = true;
-      return true;
-    }
     
     try {
+      if (kDebugMode) {
+        print('Connecting to relay: $relayUrl');
+      }
+      
+      // Use WebSocketChannel for both web and native platforms
       _channel = WebSocketChannel.connect(Uri.parse(relayUrl));
       _isConnected = true;
 
@@ -75,6 +71,10 @@ class NostrRelayService {
   /// Handle messages received from the relay
   void _handleMessage(String message) {
     try {
+      if (kDebugMode) {
+        print('Received message from $relayUrl: ${message.length > 100 ? message.substring(0, 100) + '...' : message}');
+      }
+      
       final List<dynamic> parsed = jsonDecode(message);
       
       if (parsed.isEmpty) return;
@@ -89,13 +89,14 @@ class NostrRelayService {
             
             try {
               final event = NostrEvent.fromJson(eventData);
+              
+              if (kDebugMode) {
+                print('Received event with id: ${event.id.substring(0, 10)}... from $relayUrl');
+              }
+              
+              // Add the event to the stream so listeners can handle it
               _eventStreamController.add(event);
               
-              // If this is part of a subscription, add it to the results
-              if (_subscriptions.containsKey(subscriptionId)) {
-                // This is a trick to collect events for a subscription while it's active
-                // The actual completion of the subscription happens via EOSE
-              }
             } catch (e) {
               if (kDebugMode) {
                 print('Error parsing event: $e');
@@ -108,12 +109,13 @@ class NostrRelayService {
           // End of stored events for a subscription
           if (parsed.length >= 2) {
             final String subscriptionId = parsed[1];
-            if (_subscriptions.containsKey(subscriptionId)) {
-              // In a real implementation, you would collect the events
-              // and resolve the completer with the collected events
-              _subscriptions[subscriptionId]?.complete([]);
-              _subscriptions.remove(subscriptionId);
+            if (kDebugMode) {
+              print('Received EOSE for subscription $subscriptionId');
             }
+            
+            // We don't complete the completer here anymore.
+            // The timeout will handle completion with the collected events.
+            // This allows us to receive events after EOSE (realtime updates).
           }
           break;
           
@@ -131,19 +133,19 @@ class NostrRelayService {
           // Relay notice
           if (parsed.length >= 2) {
             if (kDebugMode) {
-              print('Relay notice: ${parsed[1]}');
+              print('Relay notice from $relayUrl: ${parsed[1]}');
             }
           }
           break;
           
         default:
           if (kDebugMode) {
-            print('Unknown message type: $messageType');
+            print('Unknown message type from $relayUrl: $messageType');
           }
       }
     } catch (e) {
       if (kDebugMode) {
-        print('Error handling message: $e');
+        print('Error handling message from $relayUrl: $e');
       }
     }
   }
@@ -151,23 +153,49 @@ class NostrRelayService {
   /// Subscribe to events matching the filter
   Future<List<NostrEvent>> subscribe(Map<String, dynamic> filter, {Duration? timeout}) async {
     if (!_isConnected) {
-      await connect();
+      final connected = await connect();
+      
+      // If connection failed and we're on web, fall back to mock data for better UX
+      if (!connected && kIsWeb) {
+        if (kDebugMode) {
+          print('Connection failed, falling back to mock data for $relayUrl');
+        }
+        return _getMockEvents(filter);
+      }
+      
+      // If connection failed, return empty list
+      if (!connected) {
+        return [];
+      }
     }
     
-    // For web platform, return mock data
-    if (kIsWeb) {
-      return _getMockEvents(filter);
-    }
+    // Store collected events for this subscription
+    List<NostrEvent> collectedEvents = [];
     
     final subscriptionId = const Uuid().v4();
     final completer = Completer<List<NostrEvent>>();
     _subscriptions[subscriptionId] = completer;
+    
+    // Listen for events and store them
+    final eventListener = _eventStreamController.stream.listen((event) {
+      // Check if this event matches our filter
+      if (_eventMatchesFilter(event, filter)) {
+        collectedEvents.add(event);
+        if (kDebugMode) {
+          print('Got matching event from $relayUrl: ${event.id.substring(0, 10)}...');
+        }
+      }
+    });
     
     // Create the subscription request
     final List<dynamic> request = ['REQ', subscriptionId, filter];
     
     // Send the subscription request to the relay
     _channel?.sink.add(jsonEncode(request));
+    
+    if (kDebugMode) {
+      print('Sent subscription to $relayUrl: ${jsonEncode(filter)}');
+    }
     
     // If a timeout is specified, close the subscription after the timeout
     if (timeout != null) {
@@ -176,17 +204,43 @@ class NostrRelayService {
           // Close the subscription on the relay
           _channel?.sink.add(jsonEncode(['CLOSE', subscriptionId]));
           
-          // If the completer is not completed yet, complete it with an empty list
+          // If the completer is not completed yet, complete it with collected events
           if (!completer.isCompleted) {
-            completer.complete([]);
+            if (kDebugMode) {
+              print('Subscription timed out for $relayUrl, returning ${collectedEvents.length} events');
+            }
+            completer.complete(collectedEvents);
           }
           
+          // Clean up
           _subscriptions.remove(subscriptionId);
+          eventListener.cancel();
         }
       });
     }
     
     return completer.future;
+  }
+  
+  /// Check if an event matches a filter
+  bool _eventMatchesFilter(NostrEvent event, Map<String, dynamic> filter) {
+    // Check kind
+    if (filter['kinds'] != null) {
+      if (filter['kinds'] is List && !filter['kinds'].contains(event.kind)) {
+        return false;
+      }
+    }
+    
+    // Check authors
+    if (filter['authors'] != null) {
+      if (filter['authors'] is List && !filter['authors'].contains(event.pubkey)) {
+        return false;
+      }
+    }
+    
+    // Add more filter checks as needed
+    
+    return true; // Event matches filter
   }
   
   /// Generate mock events for web platform testing
@@ -256,7 +310,12 @@ final defaultRelaysProvider = Provider<List<String>>((ref) {
     'wss://relay.damus.io',
     'wss://relay.nostr.band',
     'wss://nos.lol',
-    'wss://relay.current.fyi',
+    'wss://nostr.wine',
     'wss://relay.snort.social',
+    'wss://relay.nostr.bg',
+    'wss://purplepag.es',
+    'wss://relay.nostr.com.au',
+    'wss://nostr-pub.wellorder.net',
+    'wss://nostr.mutinywallet.com',
   ];
 });
