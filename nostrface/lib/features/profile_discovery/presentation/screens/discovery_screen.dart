@@ -40,7 +40,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
           }
           
           // Use a short delay to ensure the swiper is ready
-          Future.delayed(const Duration(milliseconds: 100), () {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               // Update the current index in state
               ref.read(currentProfileIndexProvider.notifier).state = 
@@ -62,11 +62,17 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
 
   @override
   void dispose() {
+    // Make sure we don't update state after dispose
+    final savedIndex = ref.read(currentProfileIndexProvider);
+    
+    // Save the current index to the buffer service before disposing
+    if (savedIndex > 0) {
+      final bufferService = ref.read(profileBufferServiceProvider);
+      bufferService.lastViewedIndex = savedIndex;
+    }
+    
     _swiperController.dispose();
     super.dispose();
-    
-    // Reset the current profile index when leaving the screen
-    ref.read(currentProfileIndexProvider.notifier).state = 0;
   }
 
   Future<void> _refreshProfiles() async {

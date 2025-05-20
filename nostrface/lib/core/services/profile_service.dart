@@ -916,7 +916,12 @@ class ProfileBufferService {
   
   /// Helper to notify listeners
   void _notifyListeners() {
-    _bufferStreamController.add(List.unmodifiable(_profileBuffer));
+    // Use Future.microtask to avoid calling during build
+    Future.microtask(() {
+      if (!_bufferStreamController.isClosed) {
+        _bufferStreamController.add(List.unmodifiable(_profileBuffer));
+      }
+    });
   }
   
   /// Remove a profile from the buffer (e.g., when user skips)
@@ -954,7 +959,9 @@ class ProfileBufferService {
   
   /// Clean up resources
   void dispose() {
-    _bufferStreamController.close();
+    if (!_bufferStreamController.isClosed) {
+      _bufferStreamController.close();
+    }
   }
 }
 
