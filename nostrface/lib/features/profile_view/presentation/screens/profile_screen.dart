@@ -6,6 +6,7 @@ import 'package:nostrface/core/models/nostr_event.dart';
 import 'package:nostrface/core/models/nostr_profile.dart';
 import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/core/services/profile_service.dart';
+import 'package:nostrface/features/direct_messages/presentation/widgets/dm_composer.dart';
 
 // Provider for fetching recent notes from a user
 final userNotesProvider = FutureProvider.family<List<NostrEvent>, String>((ref, pubkey) async {
@@ -320,11 +321,53 @@ class ProfileScreen extends ConsumerWidget {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // TODO: Direct message
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Direct message feature coming soon!')),
-          );
+        onPressed: () async {
+          // Check if profile is loaded
+          if (!profileAsync.hasValue || profileAsync.value == null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Unable to load profile for messaging')),
+            );
+            return;
+          }
+          
+          // Check if user is logged in
+          final isLoggedIn = await ref.read(isLoggedInProvider.future);
+          
+          if (isLoggedIn == false && context.mounted) {
+            // Show dialog to prompt user to log in
+            showDialog(
+              context: context,
+              builder: (BuildContext dialogContext) => AlertDialog(
+                key: const Key('dm_login_dialog'),
+                title: const Text('Login Required'),
+                content: const Text(
+                  'You need to be logged in to send direct messages. Would you like to log in now?'
+                ),
+                actions: [
+                  TextButton(
+                    key: const Key('dm_login_cancel'),
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    key: const Key('dm_login_confirm'),
+                    onPressed: () {
+                      Navigator.of(dialogContext).pop();
+                      // Use push to preserve the stack
+                      context.push('/login');
+                    },
+                    child: const Text('Log In'),
+                  ),
+                ],
+              ),
+            );
+            return;
+          }
+
+          // If logged in and profile is loaded, show the message bottom sheet
+          if (context.mounted) {
+            _showMessageBottomSheet(context, profileAsync.value!);
+          }
         },
         child: const Icon(Icons.message),
       ),
@@ -364,5 +407,37 @@ class ProfileScreen extends ConsumerWidget {
     );
     
     return formatted;
+  }
+
+  void _showMessageBottomSheet(BuildContext context, NostrProfile profile) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).canvasColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16.0)),
+      ),
+      // Use at least 60% of screen height and expand if keyboard is shown
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.9,
+        minHeight: MediaQuery.of(context).size.height * 0.6,
+      ),
+      builder: (BuildContext context) {
+        return AnimatedPadding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOut,
+          child: DirectMessageComposer(
+            recipient: profile,
+            onMessageSent: () {
+              // Close the bottom sheet after message is sent
+              Navigator.of(context).pop();
+            },
+          ),
+        );
+      },
+    );
   }
 }
