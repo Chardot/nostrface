@@ -93,7 +93,47 @@ class ProfileService {
   /// Handle a profile metadata event (Kind 0)
   void _handleProfileMetadata(NostrEvent event) {
     try {
-      final profile = NostrProfile.fromMetadataEvent(event.pubkey, event.content);
+      // Try to sanitize the content if needed
+      String content = event.content;
+      
+      try {
+        // Check if the content is valid JSON
+        final contentMap = jsonDecode(content);
+        
+        // Sanitize profile data
+        bool needsSanitizing = false;
+        
+        // Check if name contains invalid UTF-8
+        if (contentMap['name'] is String) {
+          final name = contentMap['name'] as String;
+          if (name.contains('\u{FFFD}')) {
+            contentMap['name'] = _sanitizeString(name);
+            needsSanitizing = true;
+          }
+        }
+        
+        // Check if about contains invalid UTF-8
+        if (contentMap['about'] is String) {
+          final about = contentMap['about'] as String;
+          if (about.contains('\u{FFFD}')) {
+            contentMap['about'] = _sanitizeString(about);
+            needsSanitizing = true;
+          }
+        }
+        
+        // Re-encode the sanitized content if needed
+        if (needsSanitizing) {
+          content = jsonEncode(contentMap);
+        }
+      } catch (e) {
+        // If it's not valid JSON or has other issues, continue with original content
+        if (kDebugMode) {
+          print('Error sanitizing profile content: $e');
+        }
+      }
+      
+      // Create profile
+      final profile = NostrProfile.fromMetadataEvent(event.pubkey, content);
       _profiles[event.pubkey] = profile;
       _profileStreamController.add(profile);
     } catch (e) {
@@ -101,6 +141,20 @@ class ProfileService {
         print('Error handling profile metadata: $e');
       }
     }
+  }
+  
+  /// Sanitize a string by removing invalid UTF-8 characters
+  String _sanitizeString(String input) {
+    // Replace the Unicode replacement character with empty string
+    String sanitized = input.replaceAll('\u{FFFD}', '');
+    
+    // Replace any other problematic characters
+    sanitized = sanitized.replaceAll(RegExp(r'[\u{D800}-\u{DFFF}]'), '');
+    
+    // Remove any zero-width characters
+    sanitized = sanitized.replaceAll(RegExp(r'[\u{200B}-\u{200D}\u{FEFF}]'), '');
+    
+    return sanitized;
   }
   
   /// Get a profile by public key
@@ -325,7 +379,45 @@ class ProfileService {
       for (final event in events) {
         if (event.kind == NostrEvent.metadataKind && !seenPubkeys.contains(event.pubkey)) {
           try {
-            final profile = NostrProfile.fromMetadataEvent(event.pubkey, event.content);
+            // Try to sanitize the content before parsing
+            String content = event.content;
+            
+            try {
+              // Check if the content contains invalid UTF-8
+              if (content.contains('\u{FFFD}')) {
+                final contentMap = jsonDecode(content);
+                bool needsSanitizing = false;
+                
+                // Sanitize name
+                if (contentMap['name'] is String) {
+                  final name = contentMap['name'] as String;
+                  if (name.contains('\u{FFFD}')) {
+                    contentMap['name'] = _sanitizeString(name);
+                    needsSanitizing = true;
+                  }
+                }
+                
+                // Sanitize about
+                if (contentMap['about'] is String) {
+                  final about = contentMap['about'] as String;
+                  if (about.contains('\u{FFFD}')) {
+                    contentMap['about'] = _sanitizeString(about);
+                    needsSanitizing = true;
+                  }
+                }
+                
+                if (needsSanitizing) {
+                  content = jsonEncode(contentMap);
+                }
+              }
+            } catch (e) {
+              // If sanitization fails, continue with original content
+              if (kDebugMode) {
+                print('Error sanitizing profile content during discovery: $e');
+              }
+            }
+            
+            final profile = NostrProfile.fromMetadataEvent(event.pubkey, content);
             
             // Only add profiles with pictures for better UX
             if (profile.picture != null && profile.picture!.isNotEmpty) {

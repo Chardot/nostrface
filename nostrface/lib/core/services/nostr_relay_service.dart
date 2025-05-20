@@ -71,11 +71,21 @@ class NostrRelayService {
   /// Handle messages received from the relay
   void _handleMessage(String message) {
     try {
+      // Don't log the full message to avoid UTF-8 issues in console
       if (kDebugMode) {
-        print('Received message from $relayUrl: ${message.length > 100 ? message.substring(0, 100) + '...' : message}');
+        print('Received message from $relayUrl (${message.length} bytes)');
       }
       
-      final List<dynamic> parsed = jsonDecode(message);
+      // Safely parse JSON with try-catch
+      List<dynamic> parsed;
+      try {
+        parsed = jsonDecode(message);
+      } catch (e) {
+        if (kDebugMode) {
+          print('Error decoding JSON from $relayUrl: $e');
+        }
+        return;
+      }
       
       if (parsed.isEmpty) return;
       
@@ -88,6 +98,37 @@ class NostrRelayService {
             final eventData = parsed[2];
             
             try {
+              // Sanitize event content if it's a profile metadata event
+              if (eventData is Map && 
+                  eventData['kind'] == NostrEvent.metadataKind && 
+                  eventData['content'] is String) {
+                try {
+                  // Try to sanitize the content
+                  final content = eventData['content'] as String;
+                  
+                  // Check if content is valid JSON
+                  try {
+                    // Parse the content to see if it's valid JSON
+                    final contentMap = jsonDecode(content);
+                    
+                    // If name contains invalid UTF-8, sanitize it
+                    if (contentMap is Map && contentMap['name'] is String) {
+                      final name = contentMap['name'] as String;
+                      if (name.contains('\u{FFFD}')) {
+                        // Replace the name with a sanitized version
+                        contentMap['name'] = _sanitizeString(name);
+                        // Replace the content with the sanitized JSON
+                        eventData['content'] = jsonEncode(contentMap);
+                      }
+                    }
+                  } catch (_) {
+                    // If content is not valid JSON, leave it as is
+                  }
+                } catch (_) {
+                  // Ignore sanitization errors and continue with original data
+                }
+              }
+              
               final event = NostrEvent.fromJson(eventData);
               
               if (kDebugMode) {
@@ -99,7 +140,7 @@ class NostrRelayService {
               
             } catch (e) {
               if (kDebugMode) {
-                print('Error parsing event: $e');
+                print('Error parsing event from $relayUrl: $e');
               }
             }
           }
@@ -241,6 +282,20 @@ class NostrRelayService {
     // Add more filter checks as needed
     
     return true; // Event matches filter
+  }
+  
+  /// Sanitize a string by removing invalid UTF-8 characters
+  String _sanitizeString(String input) {
+    // Replace the Unicode replacement character with empty string
+    String sanitized = input.replaceAll('\u{FFFD}', '');
+    
+    // Replace any other problematic characters
+    sanitized = sanitized.replaceAll(RegExp(r'[\u{D800}-\u{DFFF}]'), '');
+    
+    // Remove any zero-width characters
+    sanitized = sanitized.replaceAll(RegExp(r'[\u{200B}-\u{200D}\u{FEFF}]'), '');
+    
+    return sanitized;
   }
   
   /// Generate mock events for web platform testing
