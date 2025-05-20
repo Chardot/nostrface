@@ -3,11 +3,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nostrface/core/services/key_management_service.dart';
 
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Force refresh of authentication state on screen load
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.invalidate(isLoggedInProvider);
+      ref.invalidate(currentPublicKeyProvider);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // Get authentication state
     final isLoggedInAsync = ref.watch(isLoggedInProvider);
     final publicKeyAsync = ref.watch(currentPublicKeyProvider);

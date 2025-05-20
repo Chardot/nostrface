@@ -1,10 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nostrface/core/services/key_management_service.dart';
 
 // Provider for the currently entered private key
 final privateKeyInputProvider = StateProvider<String>((ref) => '');
+
+// Provider for checking if the entered key is valid
+final isValidKeyProvider = Provider<bool>((ref) {
+  final key = ref.watch(privateKeyInputProvider);
+  final keyService = ref.watch(keyManagementServiceProvider);
+  return keyService.isValidPrivateKey(key);
+});
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -24,21 +32,58 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _handlePrivateKeyInput() async {
+    final String privateKey = _privateKeyController.text.trim();
+    
+    // Debug information
+    if (privateKey.startsWith('nsec1')) {
+      debugPrint('Processing nsec key: ${privateKey.substring(0, 8)}...');
+    }
+    
     setState(() {
       _isProcessing = true;
     });
 
     try {
       final keyService = ref.read(keyManagementServiceProvider);
-      await keyService.storePrivateKey(_privateKeyController.text.trim());
       
-      if (mounted) {
-        context.go('/discovery');
+      // Store the private key
+      await keyService.storePrivateKey(privateKey);
+      
+      // Force refresh of authentication state
+      ref.invalidate(isLoggedInProvider);
+      ref.invalidate(currentPublicKeyProvider);
+      
+      // Verify the key was stored correctly
+      final isLoggedIn = await keyService.hasPrivateKey();
+      
+      if (kDebugMode) {
+        print('Login success check: $isLoggedIn');
       }
-    } catch (e) {
+      
+      // Show success message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving private key: ${e.toString()}')),
+          SnackBar(
+            content: Text('Private key accepted${privateKey.startsWith('nsec1') ? ' (nsec format)' : ''}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+      
+      if (mounted) {
+        // Wait a moment for the providers to update
+        Future.delayed(const Duration(milliseconds: 500), () {
+          context.go('/discovery');
+        });
+      }
+    } catch (e) {
+      debugPrint('Error storing private key: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving private key: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -140,10 +185,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             const SizedBox(height: 16),
             TextField(
               controller: _privateKeyController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Private Key (nsec or hex)',
                 hintText: 'Enter your private key',
-                border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
+                helperText: 'Paste your nsec key or private key hex',
+                suffixIcon: _privateKeyController.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _privateKeyController.clear();
+                        ref.read(privateKeyInputProvider.notifier).state = '';
+                      },
+                    )
+                  : null,
               ),
               obscureText: true,
               onChanged: (value) {
@@ -151,20 +206,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               },
             ),
             const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _isProcessing || _privateKeyController.text.isEmpty 
-                ? null 
-                : _handlePrivateKeyInput,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
-              child: _isProcessing
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Login with Private Key'),
+            Consumer(
+              builder: (context, ref, child) {
+                final isValid = ref.watch(isValidKeyProvider);
+                final privateKey = ref.watch(privateKeyInputProvider);
+                
+                return ElevatedButton(
+                  onPressed: _isProcessing || !isValid
+                    ? null 
+                    : _handlePrivateKeyInput,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: _isProcessing
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(privateKey.startsWith('nsec1') 
+                        ? 'Login with nsec' 
+                        : 'Login with Private Key'),
+                );
+              },
             ),
             const SizedBox(height: 16),
             OutlinedButton(

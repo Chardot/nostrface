@@ -35,7 +35,7 @@ class AppTheme {
       onError: Colors.white,
     ),
     scaffoldBackgroundColor: backgroundColor,
-    cardTheme: const CardTheme(
+    cardTheme: const CardThemeData(
       color: cardColor,
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -107,7 +107,7 @@ class AppTheme {
       onError: Colors.white,
     ),
     scaffoldBackgroundColor: darkBackgroundColor,
-    cardTheme: const CardTheme(
+    cardTheme: const CardThemeData(
       color: darkCardColor,
       elevation: 2,
       shape: RoundedRectangleBorder(

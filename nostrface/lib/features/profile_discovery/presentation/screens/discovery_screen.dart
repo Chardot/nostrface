@@ -22,8 +22,12 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
     super.initState();
     _swiperController = SwiperController();
     
-    // Load profiles when screen initializes
-    _refreshProfiles();
+    // Load profiles after widget is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _refreshProfiles();
+      }
+    });
   }
 
   @override
@@ -33,15 +37,22 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   }
 
   Future<void> _refreshProfiles() async {
-    setState(() {
-      _isLoading = true;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
     
-    // Invalidate the discovery provider to trigger a refresh
-    ref.invalidate(profileDiscoveryProvider);
-    
-    setState(() {
-      _isLoading = false;
+    // Delay the invalidation to avoid the error during initialization
+    Future.microtask(() {
+      if (mounted) {
+        // Invalidate the discovery provider to trigger a refresh
+        ref.invalidate(profileDiscoveryProvider);
+        
+        setState(() {
+          _isLoading = false;
+        });
+      }
     });
   }
 

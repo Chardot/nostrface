@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:uuid/uuid.dart';
 import 'package:nostrface/core/models/nostr_event.dart';
+import 'package:nostrface/core/models/nostr_profile.dart';
 
 /// Service for handling connections to Nostr relays
 class NostrRelayService {
@@ -23,6 +24,15 @@ class NostrRelayService {
   Future<bool> connect() async {
     if (_isConnected) return true;
 
+    // In web context, we'll use mock data for now to avoid WebSocket issues
+    if (kIsWeb) {
+      if (kDebugMode) {
+        print('Web mode: Using mock data instead of WebSocket connection to $relayUrl');
+      }
+      _isConnected = true;
+      return true;
+    }
+    
     try {
       _channel = WebSocketChannel.connect(Uri.parse(relayUrl));
       _isConnected = true;
@@ -144,6 +154,11 @@ class NostrRelayService {
       await connect();
     }
     
+    // For web platform, return mock data
+    if (kIsWeb) {
+      return _getMockEvents(filter);
+    }
+    
     final subscriptionId = const Uuid().v4();
     final completer = Completer<List<NostrEvent>>();
     _subscriptions[subscriptionId] = completer;
@@ -172,6 +187,44 @@ class NostrRelayService {
     }
     
     return completer.future;
+  }
+  
+  /// Generate mock events for web platform testing
+  List<NostrEvent> _getMockEvents(Map<String, dynamic> filter) {
+    List<NostrEvent> mockEvents = [];
+    
+    // Check if this is a request for profile metadata
+    if (filter['kinds'] != null && filter['kinds'].contains(NostrEvent.metadataKind)) {
+      // Create some mock profiles
+      for (int i = 0; i < 10; i++) {
+        final pubkey = 'mock_pubkey_$i';
+        final profile = NostrProfile(
+          pubkey: pubkey,
+          name: 'User $i',
+          displayName: 'Test User $i',
+          picture: 'https://picsum.photos/500/500?random=$i',
+          banner: 'https://picsum.photos/1000/300?random=$i',
+          about: 'This is a mock profile bio for testing on the web platform. User $i is a test user.',
+          website: 'https://example.com',
+          nip05: 'user$i@example.com',
+        );
+        
+        // Create a mock event for this profile
+        final event = NostrEvent(
+          id: 'mock_event_$i',
+          pubkey: pubkey,
+          created_at: DateTime.now().subtract(Duration(days: i)).millisecondsSinceEpoch ~/ 1000,
+          kind: NostrEvent.metadataKind,
+          tags: [],
+          content: jsonEncode(profile.toJson()),
+          sig: 'mock_signature',
+        );
+        
+        mockEvents.add(event);
+      }
+    }
+    
+    return mockEvents;
   }
 
   /// Publish an event to the relay
