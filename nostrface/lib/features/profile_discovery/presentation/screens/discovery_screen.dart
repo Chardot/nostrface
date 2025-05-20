@@ -202,20 +202,24 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                               // Show dialog to prompt user to log in
                               showDialog(
                                 context: context,
-                                builder: (context) => AlertDialog(
+                                builder: (BuildContext dialogContext) => AlertDialog(
+                                  key: const Key('discovery_login_dialog'),
                                   title: const Text('Login Required'),
                                   content: const Text(
                                     'You need to be logged in to follow profiles. Would you like to log in now?'
                                   ),
                                   actions: [
                                     TextButton(
-                                      onPressed: () => Navigator.of(context).pop(),
+                                      key: const Key('discovery_login_cancel'),
+                                      onPressed: () => Navigator.of(dialogContext).pop(),
                                       child: const Text('Cancel'),
                                     ),
                                     ElevatedButton(
+                                      key: const Key('discovery_login_confirm'),
                                       onPressed: () {
-                                        Navigator.of(context).pop();
-                                        context.go('/login');
+                                        Navigator.of(dialogContext).pop();
+                                        // Use push to preserve the stack (we want to return to discovery after login)
+                                        context.push('/login');
                                       },
                                       child: const Text('Log In'),
                                     ),

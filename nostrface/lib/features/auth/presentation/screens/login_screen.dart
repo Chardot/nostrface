@@ -60,29 +60,35 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         print('Login success check: $isLoggedIn');
       }
       
-      // Show success message
+      // Wait a moment for the providers to update, then navigate
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Private key accepted${privateKey.startsWith('nsec1') ? ' (nsec format)' : ''}'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-      
-      if (mounted) {
-        // Wait a moment for the providers to update
-        Future.delayed(const Duration(milliseconds: 500), () {
-          context.go('/discovery');
+        // We'll use a single navigation instead of showing a snackbar and then navigating
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            context.go('/discovery');
+          }
         });
       }
     } catch (e) {
       debugPrint('Error storing private key: $e');
+      // Show error locally in the login screen without a snackbar
+      setState(() {
+        _isProcessing = false;
+      });
+      
+      // Display error in a more stable way if context is still valid
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Login Error'),
             content: Text('Error saving private key: ${e.toString()}'),
-            backgroundColor: Colors.red,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
           ),
         );
       }
