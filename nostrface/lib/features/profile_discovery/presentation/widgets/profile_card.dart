@@ -6,6 +6,7 @@ class ProfileCard extends StatelessWidget {
   final String imageUrl;
   final String bio;
   final VoidCallback onTap;
+  final bool isFollowed;
 
   const ProfileCard({
     Key? key,
@@ -13,6 +14,7 @@ class ProfileCard extends StatelessWidget {
     required this.imageUrl,
     required this.bio,
     required this.onTap,
+    this.isFollowed = false,
   }) : super(key: key);
 
   @override
@@ -70,20 +72,43 @@ class ProfileCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Row(
-                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Icon(
-                          Icons.person,
-                          size: 14,
-                          color: Theme.of(context).colorScheme.primary,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.person,
+                              size: 14,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'View Profile',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'View Profile',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.primary,
+                        if (isFollowed)
+                          Chip(
+                            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                            label: Text(
+                              'Following',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                            avatar: Icon(
+                              Icons.check_circle,
+                              size: 16,
+                              color: Theme.of(context).colorScheme.onPrimaryContainer,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
                           ),
-                        ),
                       ],
                     ),
                   ],

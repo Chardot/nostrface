@@ -2,10 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:nostrface/core/models/nostr_event.dart';
 import 'package:nostrface/core/models/nostr_profile.dart';
+import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/core/services/nostr_relay_service.dart';
 import 'package:hive/hive.dart';
+import 'package:uuid/uuid.dart';
 
 /// Service for managing Nostr profile data
 class ProfileService {
@@ -13,12 +16,63 @@ class ProfileService {
   final List<NostrRelayService> _relayServices = [];
   final Map<String, NostrProfile> _profiles = {};
   final StreamController<NostrProfile> _profileStreamController = StreamController<NostrProfile>.broadcast();
+  final Set<String> _followedProfiles = {};
+  final Map<String, bool> _trustedProfilesCache = {};
   
   ProfileService(this._relayUrls) {
     _initializeRelays();
+    _loadFollowedProfiles();
   }
   
   Stream<NostrProfile> get profileStream => _profileStreamController.stream;
+  Set<String> get followedProfiles => _followedProfiles;
+  
+  /// Get the relay URLs for connecting to Nostr network
+  List<String> get relayUrls => List.unmodifiable(_relayUrls);
+  
+  /// Check if a profile is trusted according to the trust API
+  Future<bool> isProfileTrusted(String pubkey) async {
+    // Check cache first
+    if (_trustedProfilesCache.containsKey(pubkey)) {
+      return _trustedProfilesCache[pubkey]!;
+    }
+    
+    try {
+      final url = 'https://followers.nos.social/api/v1/trusted/$pubkey';
+      final response = await http.get(Uri.parse(url)).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          return http.Response('{"error": "timeout"}', 408);
+        },
+      );
+      
+      if (response.statusCode == 200) {
+        // API returns true or false directly
+        final isTrusted = response.body.toLowerCase().trim() == 'true';
+        
+        // Cache the result
+        _trustedProfilesCache[pubkey] = isTrusted;
+        
+        return isTrusted;
+      } else {
+        if (kDebugMode) {
+          print('Error checking if profile is trusted: ${response.statusCode} - ${response.body}');
+        }
+        
+        // Assume not trusted on error
+        _trustedProfilesCache[pubkey] = false;
+        return false;
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Exception checking if profile is trusted: $e');
+      }
+      
+      // Assume not trusted on error
+      _trustedProfilesCache[pubkey] = false;
+      return false;
+    }
+  }
   
   /// Initialize connections to relays
   Future<void> _initializeRelays() async {
@@ -270,9 +324,13 @@ class ProfileService {
     return results;
   }
   
-  /// Discover random profiles from the relays
+  /// Discover random profiles from the relays and filter by trust API
   Future<List<NostrProfile>> discoverProfiles({int limit = 10}) async {
-    List<NostrProfile> discoveredProfiles = [];
+    // Increase the initial limit to account for filtering
+    final initialLimit = limit * 3;
+    
+    List<NostrProfile> candidateProfiles = [];
+    List<NostrProfile> trustedProfiles = [];
     Set<String> seenPubkeys = {};
     
     // If we have no active relay connections, attempt to reconnect
@@ -288,16 +346,20 @@ class ProfileService {
         try {
           final profileBox = await Hive.openBox<String>('profiles');
           if (profileBox.isNotEmpty) {
-            // Return some random cached profiles
+            // Get random cached profiles
             final cachedKeys = profileBox.keys.toList()..shuffle();
-            final keysToUse = cachedKeys.take(limit).toList();
+            final keysToUse = cachedKeys.take(initialLimit).toList();
             
             for (final key in keysToUse) {
               final profileJson = profileBox.get(key.toString());
               if (profileJson != null) {
                 try {
                   final profile = NostrProfile.fromJson(jsonDecode(profileJson));
-                  discoveredProfiles.add(profile);
+                  
+                  // Only consider profiles with pictures
+                  if (profile.picture != null && profile.picture!.isNotEmpty) {
+                    candidateProfiles.add(profile);
+                  }
                 } catch (e) {
                   if (kDebugMode) {
                     print('Error parsing cached profile: $e');
@@ -306,11 +368,27 @@ class ProfileService {
               }
             }
             
-            if (discoveredProfiles.isNotEmpty) {
-              if (kDebugMode) {
-                print('Returning ${discoveredProfiles.length} cached profiles');
+            // Filter cached profiles by trust API
+            if (candidateProfiles.isNotEmpty) {
+              // Check each profile against the trust API
+              await Future.wait(
+                candidateProfiles.map((profile) async {
+                  if (await isProfileTrusted(profile.pubkey)) {
+                    trustedProfiles.add(profile);
+                  }
+                })
+              );
+              
+              if (trustedProfiles.isNotEmpty) {
+                if (kDebugMode) {
+                  print('Returning ${trustedProfiles.length} trusted cached profiles');
+                }
+                return trustedProfiles.take(limit).toList();
+              } else {
+                if (kDebugMode) {
+                  print('No trusted cached profiles found, fetching from relays');
+                }
               }
-              return discoveredProfiles;
             }
           }
         } catch (e) {
@@ -324,7 +402,7 @@ class ProfileService {
     // Build a filter for Kind 0 (metadata) events
     final filter = {
       'kinds': [NostrEvent.metadataKind],
-      'limit': limit * 3, // Ask for more than we need in case some fail
+      'limit': initialLimit, // Ask for more than we need for filtering
     };
     
     // Query multiple relays in parallel with increased timeout
@@ -374,7 +452,7 @@ class ProfileService {
       print('Got results from ${results.length} relays');
     }
     
-    // Process the results
+    // Process the results to build candidate profiles
     for (final events in results) {
       for (final event in events) {
         if (event.kind == NostrEvent.metadataKind && !seenPubkeys.contains(event.pubkey)) {
@@ -421,7 +499,7 @@ class ProfileService {
             
             // Only add profiles with pictures for better UX
             if (profile.picture != null && profile.picture!.isNotEmpty) {
-              discoveredProfiles.add(profile);
+              candidateProfiles.add(profile);
               seenPubkeys.add(profile.pubkey);
               
               // Cache the profile
@@ -434,7 +512,8 @@ class ProfileService {
                 }
               });
               
-              if (discoveredProfiles.length >= limit) {
+              // We need to get enough candidates for filtering
+              if (candidateProfiles.length >= initialLimit) {
                 break;
               }
             }
@@ -446,16 +525,37 @@ class ProfileService {
         }
       }
       
-      if (discoveredProfiles.length >= limit) {
+      if (candidateProfiles.length >= initialLimit) {
         break;
       }
     }
     
-    if (kDebugMode) {
-      print('Returning ${discoveredProfiles.length} discovered profiles');
+    if (candidateProfiles.isEmpty) {
+      if (kDebugMode) {
+        print('No candidate profiles found');
+      }
+      return [];
     }
     
-    return discoveredProfiles;
+    if (kDebugMode) {
+      print('Found ${candidateProfiles.length} candidate profiles, filtering by trust API');
+    }
+    
+    // Filter profiles by trust API in parallel
+    await Future.wait(
+      candidateProfiles.map((profile) async {
+        if (await isProfileTrusted(profile.pubkey)) {
+          trustedProfiles.add(profile);
+        }
+      })
+    );
+    
+    if (kDebugMode) {
+      print('After filtering, found ${trustedProfiles.length} trusted profiles');
+    }
+    
+    // Return only trusted profiles
+    return trustedProfiles.take(limit).toList();
   }
   
   /// Save a profile to storage asynchronously
@@ -468,6 +568,113 @@ class ProfileService {
         print('Error saving profile to storage: $e');
       }
       rethrow;
+    }
+  }
+  
+  /// Load the list of followed profiles from local storage
+  Future<void> _loadFollowedProfiles() async {
+    try {
+      final followedBox = await Hive.openBox<String>('followed_profiles');
+      final followed = followedBox.get('followed_list');
+      
+      if (followed != null) {
+        final List<dynamic> followedList = jsonDecode(followed);
+        _followedProfiles.addAll(followedList.cast<String>());
+        
+        if (kDebugMode) {
+          print('Loaded ${_followedProfiles.length} followed profiles');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error loading followed profiles: $e');
+      }
+    }
+  }
+  
+  /// Save the list of followed profiles to local storage
+  Future<void> _saveFollowedProfiles() async {
+    try {
+      final followedBox = await Hive.openBox<String>('followed_profiles');
+      await followedBox.put('followed_list', jsonEncode(_followedProfiles.toList()));
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error saving followed profiles: $e');
+      }
+    }
+  }
+  
+  /// Check if a profile is followed by the current user
+  bool isProfileFollowed(String pubkey) {
+    return _followedProfiles.contains(pubkey);
+  }
+  
+  /// Follow or unfollow a profile
+  Future<bool> toggleFollowProfile(String pubkey, KeyManagementService keyService) async {
+    final bool isCurrentlyFollowed = _followedProfiles.contains(pubkey);
+    
+    // Check if user is logged in
+    final String? currentUserPubkey = await keyService.getPublicKey();
+    if (currentUserPubkey == null) {
+      if (kDebugMode) {
+        print('Cannot follow/unfollow: User not logged in');
+      }
+      return false;
+    }
+    
+    // Toggle the follow status
+    if (isCurrentlyFollowed) {
+      _followedProfiles.remove(pubkey);
+    } else {
+      _followedProfiles.add(pubkey);
+    }
+    
+    // Save to local storage
+    await _saveFollowedProfiles();
+    
+    // Create and publish a contact list event
+    try {
+      // Create tags for each followed profile
+      final List<List<String>> tags = _followedProfiles
+          .map((followedPubkey) => ['p', followedPubkey])
+          .toList();
+      
+      // Create the event data
+      final eventData = {
+        'pubkey': currentUserPubkey,
+        'created_at': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        'kind': NostrEvent.contactsKind,
+        'tags': tags,
+        'content': '', // Contact list events typically have empty content
+      };
+      
+      // Sign the event
+      final String sig = await keyService.signEvent(eventData);
+      
+      // Add the signature and generate an event ID (in a real app)
+      eventData['sig'] = sig;
+      eventData['id'] = const Uuid().v4(); // In a real app, this would be a proper hash
+      
+      // Create the NostrEvent and publish to relays
+      final event = NostrEvent.fromJson(eventData);
+      
+      // Publish to all connected relays
+      for (final relay in _relayServices) {
+        if (relay.isConnected) {
+          await relay.publishEvent(event);
+        }
+      }
+      
+      if (kDebugMode) {
+        print('Successfully ${isCurrentlyFollowed ? 'unfollowed' : 'followed'} profile: $pubkey');
+      }
+      
+      return true;
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error publishing follow event: $e');
+      }
+      return false;
     }
   }
 }
@@ -485,4 +692,163 @@ final profileProvider = FutureProvider.family<NostrProfile?, String>((ref, pubke
 final profileDiscoveryProvider = FutureProvider<List<NostrProfile>>((ref) async {
   final profileService = ref.watch(profileServiceProvider);
   return await profileService.discoverProfiles();
+});
+
+final isProfileFollowedProvider = Provider.family<bool, String>((ref, pubkey) {
+  final profileService = ref.watch(profileServiceProvider);
+  return profileService.isProfileFollowed(pubkey);
+});
+
+final followProfileProvider = FutureProvider.family<bool, String>((ref, pubkey) async {
+  final profileService = ref.watch(profileServiceProvider);
+  final keyService = ref.watch(keyManagementServiceProvider);
+  return await profileService.toggleFollowProfile(pubkey, keyService);
+});
+
+final isProfileTrustedProvider = FutureProvider.family<bool, String>((ref, pubkey) async {
+  final profileService = ref.watch(profileServiceProvider);
+  return await profileService.isProfileTrusted(pubkey);
+});
+
+/// Service for managing a buffer of trusted profiles
+class ProfileBufferService {
+  final ProfileService _profileService;
+  final int _bufferSize;
+  final int _prefetchThreshold;
+  
+  final List<NostrProfile> _profileBuffer = [];
+  bool _isFetching = false;
+  final StreamController<List<NostrProfile>> _bufferStreamController = 
+      StreamController<List<NostrProfile>>.broadcast();
+  
+  ProfileBufferService(this._profileService, {
+    int bufferSize = 100,
+    int prefetchThreshold = 10,
+  }) : 
+    _bufferSize = bufferSize,
+    _prefetchThreshold = prefetchThreshold {
+    // Initialize the buffer with initial profiles
+    _fillBuffer();
+  }
+  
+  /// Get the stream of buffered profiles
+  Stream<List<NostrProfile>> get profilesStream => _bufferStreamController.stream;
+  
+  /// Get the current buffered profiles
+  List<NostrProfile> get currentProfiles => List.unmodifiable(_profileBuffer);
+  
+  /// Check if profiles are currently being fetched
+  bool get isFetching => _isFetching;
+  
+  /// Fill the buffer with trusted profiles
+  Future<void> _fillBuffer() async {
+    if (_isFetching) return;
+    
+    _isFetching = true;
+    _notifyListeners();
+    
+    try {
+      // Calculate how many profiles we need to fetch
+      final fetchCount = _bufferSize - _profileBuffer.length;
+      
+      if (fetchCount <= 0) {
+        _isFetching = false;
+        _notifyListeners();
+        return;
+      }
+      
+      // Fetch new profiles in batches to avoid overwhelming the network
+      const batchSize = 20;
+      int remaining = fetchCount;
+      
+      while (remaining > 0 && _profileBuffer.length < _bufferSize) {
+        final fetchSize = remaining > batchSize ? batchSize : remaining;
+        final newProfiles = await _profileService.discoverProfiles(limit: fetchSize);
+        
+        // Filter out profiles that are already in the buffer
+        final existingPubkeys = _profileBuffer.map((p) => p.pubkey).toSet();
+        final uniqueNewProfiles = newProfiles
+            .where((profile) => !existingPubkeys.contains(profile.pubkey))
+            .toList();
+        
+        if (uniqueNewProfiles.isEmpty) {
+          // No more unique profiles available from the relays
+          break;
+        }
+        
+        // Add to buffer
+        _profileBuffer.addAll(uniqueNewProfiles);
+        remaining -= uniqueNewProfiles.length;
+        
+        // Notify listeners of the updated buffer
+        _notifyListeners();
+        
+        // Short delay to avoid overloading relays
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error filling profile buffer: $e');
+      }
+    } finally {
+      _isFetching = false;
+      _notifyListeners();
+    }
+  }
+  
+  /// Check if we need to prefetch more profiles
+  void checkBufferState(int currentIndex) {
+    // If we're approaching the end of the buffer, fetch more profiles
+    if (!_isFetching && 
+        _profileBuffer.isNotEmpty && 
+        currentIndex >= _profileBuffer.length - _prefetchThreshold) {
+      _fillBuffer();
+    }
+  }
+  
+  /// Helper to notify listeners
+  void _notifyListeners() {
+    _bufferStreamController.add(List.unmodifiable(_profileBuffer));
+  }
+  
+  /// Remove a profile from the buffer (e.g., when user skips)
+  void removeProfile(String pubkey) {
+    _profileBuffer.removeWhere((profile) => profile.pubkey == pubkey);
+    _notifyListeners();
+    
+    // Check if we need to refill the buffer
+    if (_profileBuffer.length < _bufferSize - _prefetchThreshold) {
+      _fillBuffer();
+    }
+  }
+  
+  /// Refresh the entire buffer (e.g., when user pulls to refresh)
+  Future<void> refreshBuffer() async {
+    _profileBuffer.clear();
+    _notifyListeners();
+    await _fillBuffer();
+  }
+  
+  /// Clean up resources
+  void dispose() {
+    _bufferStreamController.close();
+  }
+}
+
+/// Provider for the profile buffer service
+final profileBufferServiceProvider = Provider<ProfileBufferService>((ref) {
+  final profileService = ref.watch(profileServiceProvider);
+  return ProfileBufferService(profileService);
+});
+
+/// Stream provider for buffered profiles
+final bufferedProfilesProvider = StreamProvider<List<NostrProfile>>((ref) {
+  final bufferService = ref.watch(profileBufferServiceProvider);
+  return bufferService.profilesStream;
+});
+
+/// Provider to check if more profiles are being fetched
+final isFetchingMoreProfilesProvider = Provider<bool>((ref) {
+  final bufferService = ref.watch(profileBufferServiceProvider);
+  return bufferService.isFetching;
 });

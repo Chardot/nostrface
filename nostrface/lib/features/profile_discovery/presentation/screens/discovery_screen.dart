@@ -6,6 +6,9 @@ import 'package:nostrface/core/models/nostr_profile.dart';
 import 'package:nostrface/core/services/profile_service.dart';
 import 'package:nostrface/features/profile_discovery/presentation/widgets/profile_card.dart';
 
+// Provider to track the current profile index in the swiper
+final currentProfileIndexProvider = StateProvider<int>((ref) => 0);
+
 class DiscoveryScreen extends ConsumerStatefulWidget {
   const DiscoveryScreen({Key? key}) : super(key: key);
 
@@ -34,6 +37,9 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   void dispose() {
     _swiperController.dispose();
     super.dispose();
+    
+    // Reset the current profile index when leaving the screen
+    ref.read(currentProfileIndexProvider.notifier).state = 0;
   }
 
   Future<void> _refreshProfiles() async {
@@ -43,29 +49,47 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
       });
     }
     
-    // Delay the invalidation to avoid the error during initialization
-    Future.microtask(() {
+    try {
+      // Refresh the profile buffer
+      final bufferService = ref.read(profileBufferServiceProvider);
+      await bufferService.refreshBuffer();
+      
+      // Reset swiper to beginning
+      _swiperController.move(0);
+    } finally {
       if (mounted) {
-        // Invalidate the discovery provider to trigger a refresh
-        ref.invalidate(profileDiscoveryProvider);
-        
         setState(() {
           _isLoading = false;
         });
       }
-    });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Watch the discovered profiles provider
-    final profilesAsync = ref.watch(profileDiscoveryProvider);
+    // Watch the buffered profiles provider
+    final profilesAsync = ref.watch(bufferedProfilesProvider);
+    final isFetchingMore = ref.watch(isFetchingMoreProfilesProvider);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('NostrFace'),
         centerTitle: true,
         actions: [
+          if (isFetchingMore)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Theme.of(context).colorScheme.secondary,
+                  ),
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _isLoading ? null : _refreshProfiles,
@@ -77,7 +101,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
           if (profiles.isEmpty) {
             return const Center(
               child: Text(
-                'No profiles found.\nTry refreshing or check your relay connections.',
+                'No trusted profiles found.\nWe filter profiles by trust score for your safety.\nTry refreshing or check your relay connections.',
                 textAlign: TextAlign.center,
               ),
             );
@@ -91,10 +115,12 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                   child: Swiper(
                     itemBuilder: (BuildContext context, int index) {
                       final profile = profiles[index];
+                      final isFollowed = ref.watch(isProfileFollowedProvider(profile.pubkey));
                       return ProfileCard(
                         name: profile.displayNameOrName,
                         imageUrl: profile.picture ?? 'https://picsum.photos/500/500?random=$index',
                         bio: profile.about ?? 'No bio available',
+                        isFollowed: isFollowed,
                         onTap: () {
                           context.go('/discovery/profile/${profile.pubkey}');
                         },
@@ -106,10 +132,12 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                     itemWidth: MediaQuery.of(context).size.width * 0.85,
                     itemHeight: MediaQuery.of(context).size.height * 0.7,
                     onIndexChanged: (index) {
-                      // Pre-fetch more profiles if we're near the end of the list
-                      if (index >= profiles.length - 3) {
-                        // In a real app, you would fetch more profiles here
-                      }
+                      // Update the current profile index in the provider
+                      ref.read(currentProfileIndexProvider.notifier).state = index;
+                      
+                      // Check if we need to prefetch more profiles using our buffer service
+                      final bufferService = ref.read(profileBufferServiceProvider);
+                      bufferService.checkBufferState(index);
                     },
                   ),
                 ),
@@ -119,27 +147,60 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _buildActionButton(
-                      icon: Icons.close,
-                      color: Colors.red,
-                      onPressed: () {
-                        _swiperController.next();
+                    Consumer(
+                      builder: (context, ref, child) {
+                        final currentIndex = ref.watch(currentProfileIndexProvider);
+                        final hasProfiles = profiles.isNotEmpty && currentIndex < profiles.length;
+                        
+                        return _buildActionButton(
+                          icon: Icons.close,
+                          color: Colors.red,
+                          onPressed: hasProfiles ? () {
+                            _swiperController.next();
+                          } : null,
+                        );
                       },
                     ),
-                    _buildActionButton(
-                      icon: Icons.star,
-                      color: Colors.blue,
-                      onPressed: () {
-                        // TODO: Save to favorites
-                        _swiperController.next();
+                    Consumer(
+                      builder: (context, ref, child) {
+                        final currentIndex = ref.watch(currentProfileIndexProvider);
+                        final hasProfiles = profiles.isNotEmpty && currentIndex < profiles.length;
+                        
+                        return _buildActionButton(
+                          icon: Icons.star,
+                          color: Colors.blue,
+                          onPressed: hasProfiles ? () {
+                            // TODO: Save to favorites
+                            _swiperController.next();
+                          } : null,
+                        );
                       },
                     ),
-                    _buildActionButton(
-                      icon: Icons.favorite,
-                      color: Colors.green,
-                      onPressed: () {
-                        // TODO: Follow profile
-                        _swiperController.next();
+                    Consumer(
+                      builder: (context, ref, child) {
+                        final currentIndex = ref.watch(currentProfileIndexProvider);
+                        if (currentIndex < 0 || currentIndex >= profiles.length) {
+                          return _buildActionButton(
+                            icon: Icons.favorite,
+                            color: Colors.green,
+                            onPressed: null,
+                          );
+                        }
+                        
+                        final profile = profiles[currentIndex];
+                        final isFollowed = ref.watch(isProfileFollowedProvider(profile.pubkey));
+                        
+                        return _buildActionButton(
+                          icon: isFollowed ? Icons.favorite : Icons.favorite_border,
+                          color: isFollowed ? Colors.red : Colors.green,
+                          onPressed: () async {
+                            // Toggle follow status
+                            await ref.read(followProfileProvider(profile.pubkey).future);
+                            
+                            // Advance to next profile
+                            _swiperController.next();
+                          },
+                        );
                       },
                     ),
                   ],
@@ -187,7 +248,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   Widget _buildActionButton({
     required IconData icon,
     required Color color,
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
   }) {
     return Material(
       elevation: 4,
@@ -198,7 +259,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
         child: Ink(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: color,
+            color: onPressed == null ? Colors.grey : color,
           ),
           child: Container(
             padding: const EdgeInsets.all(16.0),
