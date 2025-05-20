@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nostrface/core/models/nostr_event.dart';
 import 'package:nostrface/core/models/nostr_profile.dart';
+import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/core/services/profile_service.dart';
 
 // Provider for fetching recent notes from a user
@@ -81,7 +82,7 @@ class ProfileScreen extends ConsumerWidget {
                           // Check if user is logged in
                           final isLoggedIn = await ref.read(isLoggedInProvider.future);
                           
-                          if (!isLoggedIn && context.mounted) {
+                          if (isLoggedIn == false && context.mounted) {
                             // Show dialog to prompt user to log in
                             showDialog(
                               context: context,
