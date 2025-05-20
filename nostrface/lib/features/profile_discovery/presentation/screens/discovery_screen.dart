@@ -1,5 +1,6 @@
 import 'package:card_swiper/card_swiper.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nostrface/core/models/nostr_profile.dart';
@@ -29,7 +30,32 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
     // Load profiles after widget is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _refreshProfiles();
+        // Get the buffer service
+        final bufferService = ref.read(profileBufferServiceProvider);
+        
+        // If the buffer already has profiles, restore the last position
+        if (bufferService.hasLoadedProfiles) {
+          if (kDebugMode) {
+            print('Restoring to profile index: ${bufferService.lastViewedIndex}');
+          }
+          
+          // Use a short delay to ensure the swiper is ready
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (mounted) {
+              // Update the current index in state
+              ref.read(currentProfileIndexProvider.notifier).state = 
+                  bufferService.lastViewedIndex;
+              
+              // Move the swiper to the saved position
+              if (bufferService.lastViewedIndex > 0) {
+                _swiperController.move(bufferService.lastViewedIndex);
+              }
+            }
+          });
+        } else {
+          // If no profiles in buffer yet, trigger a refresh
+          _refreshProfiles();
+        }
       }
     });
   }
@@ -136,8 +162,11 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                       // Update the current profile index in the provider
                       ref.read(currentProfileIndexProvider.notifier).state = index;
                       
-                      // Check if we need to prefetch more profiles using our buffer service
+                      // Save the current position for persistence
                       final bufferService = ref.read(profileBufferServiceProvider);
+                      bufferService.lastViewedIndex = index;
+                      
+                      // Check if we need to prefetch more profiles using our buffer service
                       bufferService.checkBufferState(index);
                     },
                   ),

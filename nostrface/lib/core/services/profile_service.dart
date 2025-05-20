@@ -783,8 +783,16 @@ class ProfileBufferService {
   final int _bufferSize;
   final int _prefetchThreshold;
   
+  // This list will persist in memory as long as the app is running
   final List<NostrProfile> _profileBuffer = [];
   bool _isFetching = false;
+  
+  // Track the last viewed index to restore position
+  int _lastViewedIndex = 0;
+  
+  // Persist the buffer state
+  bool _hasInitializedBuffer = false;
+  
   final StreamController<List<NostrProfile>> _bufferStreamController = 
       StreamController<List<NostrProfile>>.broadcast();
   
@@ -794,8 +802,10 @@ class ProfileBufferService {
   }) : 
     _bufferSize = bufferSize,
     _prefetchThreshold = prefetchThreshold {
-    // Initialize the buffer with initial profiles
-    _fillBuffer();
+    // Initialize the buffer with initial profiles - but only once
+    if (!_hasInitializedBuffer) {
+      _fillBuffer();
+    }
   }
   
   /// Get the stream of buffered profiles
@@ -807,6 +817,17 @@ class ProfileBufferService {
   /// Check if profiles are currently being fetched
   bool get isFetching => _isFetching;
   
+  /// Get the last viewed index
+  int get lastViewedIndex => _lastViewedIndex;
+  
+  /// Set the last viewed index
+  set lastViewedIndex(int index) {
+    _lastViewedIndex = index;
+  }
+  
+  /// Check if buffer has been initialized
+  bool get hasLoadedProfiles => _hasInitializedBuffer && _profileBuffer.isNotEmpty;
+  
   /// Fill the buffer with trusted profiles
   Future<void> _fillBuffer() async {
     if (_isFetching) return;
@@ -815,10 +836,22 @@ class ProfileBufferService {
     _notifyListeners();
     
     try {
+      // If we already have profiles and the buffer is marked as initialized,
+      // we can just notify listeners and return
+      if (_hasInitializedBuffer && _profileBuffer.isNotEmpty) {
+        if (kDebugMode) {
+          print('Using ${_profileBuffer.length} cached profiles from memory');
+        }
+        _isFetching = false;
+        _notifyListeners();
+        return;
+      }
+      
       // Calculate how many profiles we need to fetch
       final fetchCount = _bufferSize - _profileBuffer.length;
       
       if (fetchCount <= 0) {
+        _hasInitializedBuffer = true;
         _isFetching = false;
         _notifyListeners();
         return;
@@ -852,6 +885,14 @@ class ProfileBufferService {
         
         // Short delay to avoid overloading relays
         await Future.delayed(const Duration(milliseconds: 500));
+      }
+      
+      // Mark buffer as initialized if we have profiles
+      if (_profileBuffer.isNotEmpty) {
+        _hasInitializedBuffer = true;
+        if (kDebugMode) {
+          print('Profile buffer initialized with ${_profileBuffer.length} profiles');
+        }
       }
     } catch (e) {
       if (kDebugMode) {
@@ -891,9 +932,24 @@ class ProfileBufferService {
   
   /// Refresh the entire buffer (e.g., when user pulls to refresh)
   Future<void> refreshBuffer() async {
+    // Clear the buffer but keep track of initialization state
     _profileBuffer.clear();
     _notifyListeners();
+    
+    // Force re-fetching of profiles by temporarily resetting the initialized flag
+    final wasInitialized = _hasInitializedBuffer;
+    _hasInitializedBuffer = false;
+    
+    // Fill the buffer
     await _fillBuffer();
+    
+    // Restore initialization state if filling failed
+    if (!_hasInitializedBuffer) {
+      _hasInitializedBuffer = wasInitialized;
+    }
+    
+    // Reset the last viewed index
+    _lastViewedIndex = 0;
   }
   
   /// Clean up resources
