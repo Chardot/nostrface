@@ -7,6 +7,7 @@ import 'package:nostrface/core/models/nostr_profile.dart';
 import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/core/services/profile_service.dart';
 import 'package:nostrface/core/services/discarded_profiles_service.dart';
+import 'package:nostrface/core/providers/app_providers.dart';
 import 'package:nostrface/features/profile_discovery/presentation/widgets/profile_card.dart';
 
 // Provider to track the current profile index in the swiper
@@ -64,16 +65,10 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
 
   @override
   void dispose() {
-    // Make sure we don't update state after dispose
-    final savedIndex = ref.read(currentProfileIndexProvider);
-    
-    // Save the current index to the buffer service before disposing
-    if (savedIndex > 0) {
-      final bufferService = ref.read(profileBufferServiceProvider);
-      bufferService.lastViewedIndex = savedIndex;
-    }
-    
+    // Dispose the controller first
     _swiperController.dispose();
+    
+    // Don't access ref in dispose() as the widget might already be disposed
     super.dispose();
   }
 
@@ -175,7 +170,8 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                   child: Swiper(
                     itemBuilder: (BuildContext context, int index) {
                       final profile = profiles[index];
-                      final isFollowed = ref.watch(isProfileFollowedProvider(profile.pubkey));
+                      final isFollowedAsync = ref.watch(isProfileFollowedProvider(profile.pubkey));
+                      final isFollowed = isFollowedAsync.valueOrNull ?? false;
                       return ProfileCard(
                         name: profile.displayNameOrName,
                         imageUrl: profile.picture ?? 'https://picsum.photos/500/500?random=$index',
@@ -183,6 +179,19 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                         isFollowed: isFollowed,
                         onTap: () {
                           context.go('/discovery/profile/${profile.pubkey}');
+                        },
+                        onImageError: (imageUrl) async {
+                          if (kDebugMode) {
+                            print('Image failed for profile ${profile.pubkey}: $imageUrl');
+                          }
+                          
+                          // Mark this image as failed
+                          final failedImagesService = ref.read(failedImagesServiceProvider);
+                          await failedImagesService.markImageAsFailed(imageUrl);
+                          
+                          // Remove this profile from the buffer
+                          final bufferService = ref.read(profileBufferServiceProvider);
+                          bufferService.removeProfile(profile.pubkey);
                         },
                       );
                     },
@@ -262,11 +271,49 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                         final hasProfiles = profiles.isNotEmpty && currentIndex < profiles.length;
                         
                         return _buildActionButton(
-                          icon: Icons.star,
+                          icon: Icons.message,
                           color: Colors.blue,
-                          onPressed: hasProfiles ? () {
-                            // TODO: Save to favorites
-                            _swiperController.next();
+                          onPressed: hasProfiles ? () async {
+                            // Check if user is logged in
+                            final isLoggedIn = await ref.read(isLoggedInProvider.future);
+                            
+                            if (!isLoggedIn && context.mounted) {
+                              // Show dialog to prompt user to log in
+                              showDialog(
+                                context: context,
+                                builder: (BuildContext dialogContext) => AlertDialog(
+                                  key: const Key('discovery_dm_login_dialog'),
+                                  title: const Text('Login Required'),
+                                  content: const Text(
+                                    'You need to be logged in to send direct messages. Would you like to log in now?'
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      key: const Key('discovery_dm_login_cancel'),
+                                      onPressed: () => Navigator.of(dialogContext).pop(),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    ElevatedButton(
+                                      key: const Key('discovery_dm_login_confirm'),
+                                      onPressed: () {
+                                        Navigator.of(dialogContext).pop();
+                                        context.push('/login');
+                                      },
+                                      child: const Text('Log In'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              return;
+                            }
+                            
+                            // Navigate to profile screen with DM intent
+                            final profile = profiles[currentIndex];
+                            if (context.mounted) {
+                              // For now, navigate to profile screen
+                              // TODO: When DM screen is implemented, navigate directly to DM
+                              context.go('/discovery/profile/${profile.pubkey}');
+                            }
                           } : null,
                         );
                       },
@@ -283,16 +330,25 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                         }
                         
                         final profile = profiles[currentIndex];
-                        final isFollowed = ref.watch(isProfileFollowedProvider(profile.pubkey));
+                        final isFollowedAsync = ref.watch(isProfileFollowedProvider(profile.pubkey));
                         
-                        return _buildActionButton(
-                          icon: isFollowed ? Icons.favorite : Icons.favorite_border,
-                          color: isFollowed ? Colors.red : Colors.green,
+                        return isFollowedAsync.when(
+                          data: (isFollowed) => _buildActionButton(
+                            icon: isFollowed ? Icons.check : Icons.favorite_border,
+                            color: isFollowed ? Colors.green : Colors.white,
+                            iconColor: isFollowed ? Colors.white : Colors.green,
                           onPressed: () async {
-                            // Check if user is logged in
-                            final isLoggedIn = await ref.read(isLoggedInProvider.future);
+                            print('\n=== FOLLOW BUTTON PRESSED ===');
+                            print('Profile: ${profile.displayNameOrName} (${profile.pubkey})');
+                            print('Currently followed: $isFollowed');
                             
-                            if (isLoggedIn == false && context.mounted) {
+                            // Check if user is logged in
+                            print('Checking authentication status...');
+                            final isLoggedIn = await ref.read(isLoggedInProvider.future);
+                            print('Is logged in: $isLoggedIn');
+                            
+                            if (!isLoggedIn && context.mounted) {
+                              print('User not logged in, showing login dialog');
                               // Show dialog to prompt user to log in
                               showDialog(
                                 context: context,
@@ -324,44 +380,80 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                             }
                             
                             // If logged in, toggle follow status
-                            final result = await ref.read(followProfileProvider(profile.pubkey).future);
+                            print('User is logged in, attempting to toggle follow status');
                             
-                            if (result.isSuccess && context.mounted) {
+                            // Optimistically update the UI immediately
+                            final profileService = ref.read(profileServiceProvider);
+                            if (isFollowed) {
+                              print('Calling optimisticallyUnfollow for ${profile.pubkey}');
+                              profileService.optimisticallyUnfollow(profile.pubkey);
+                            } else {
+                              print('Calling optimisticallyFollow for ${profile.pubkey}');
+                              profileService.optimisticallyFollow(profile.pubkey);
+                            }
+                            
+                            print('After optimistic update - should trigger stream emission');
+                            // The StreamProvider will automatically update when the stream emits new values
+                            
+                            // Show immediate feedback
+                            if (context.mounted) {
                               final message = isFollowed 
-                                ? 'Unfollowed ${profile.displayNameOrName}' 
-                                : 'Following ${profile.displayNameOrName}';
+                                ? 'Unfollowing ${profile.displayNameOrName}...' 
+                                : 'Following ${profile.displayNameOrName}...';
                               
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(message),
-                                      Text(
-                                        'Published to ${result.successCount}/${result.totalRelays} relays',
-                                        style: Theme.of(context).textTheme.bodySmall,
-                                      ),
-                                    ],
-                                  ),
-                                  duration: const Duration(seconds: 3),
-                                ),
-                              );
-                            } else if (!result.isSuccess && context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Failed to publish follow event (${result.successCount}/${result.totalRelays} relays)'
-                                  ),
-                                  backgroundColor: Colors.red,
-                                  duration: const Duration(seconds: 3),
+                                  content: Text(message),
+                                  duration: const Duration(seconds: 1),
                                 ),
                               );
                             }
                             
-                            // Advance to next profile
-                            _swiperController.next();
+                            // Publish to relays in the background
+                            print('Publishing follow event in background...');
+                            ref.read(publishFollowEventProvider.future).then((result) {
+                              print('Follow operation completed:');
+                              print('  Event ID: ${result.eventId}');
+                              print('  Success: ${result.isSuccess}');
+                              print('  Success rate: ${(result.successRate * 100).toStringAsFixed(1)}%');
+                              
+                              if (!result.isSuccess) {
+                                // Revert the optimistic update if failed
+                                if (isFollowed) {
+                                  profileService.optimisticallyFollow(profile.pubkey);
+                                } else {
+                                  profileService.optimisticallyUnfollow(profile.pubkey);
+                                }
+                                
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Failed to publish follow event (${result.successCount}/${result.totalRelays} relays)'
+                                      ),
+                                      backgroundColor: Colors.red,
+                                      duration: const Duration(seconds: 3),
+                                    ),
+                                  );
+                                }
+                              }
+                            });
+                            
+                            print('=== FOLLOW BUTTON HANDLER COMPLETE ===\n');
+                            // Remove automatic swiping - let user decide when to move on
                           },
+                          ),
+                          loading: () => _buildActionButton(
+                            icon: Icons.favorite_border,
+                            color: Colors.grey,
+                            onPressed: null,
+                          ),
+                          error: (_, __) => _buildActionButton(
+                            icon: Icons.favorite_border,
+                            color: Colors.white,
+                            iconColor: Colors.green,
+                            onPressed: null,
+                          ),
                         );
                       },
                     ),
@@ -385,14 +477,27 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                     child: Swiper(
                       itemBuilder: (BuildContext context, int index) {
                         final profile = profiles[index];
-                        final isFollowed = ref.watch(isProfileFollowedProvider(profile.pubkey));
+                        final isFollowedAsync = ref.watch(isProfileFollowedProvider(profile.pubkey));
                         return ProfileCard(
                           name: profile.displayNameOrName,
                           imageUrl: profile.picture ?? 'https://picsum.photos/500/500?random=$index',
                           bio: profile.about ?? 'No bio available',
-                          isFollowed: isFollowed,
+                          isFollowed: isFollowedAsync.valueOrNull ?? false,
                           onTap: () {
                             context.go('/discovery/profile/${profile.pubkey}');
+                          },
+                          onImageError: (imageUrl) async {
+                            if (kDebugMode) {
+                              print('Image failed for profile ${profile.pubkey}: $imageUrl');
+                            }
+                            
+                            // Mark this image as failed
+                            final failedImagesService = ref.read(failedImagesServiceProvider);
+                            await failedImagesService.markImageAsFailed(imageUrl);
+                            
+                            // Remove this profile from the buffer
+                            final bufferService = ref.read(profileBufferServiceProvider);
+                            bufferService.removeProfile(profile.pubkey);
                           },
                         );
                       },
@@ -457,6 +562,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   Widget _buildActionButton({
     required IconData icon,
     required Color color,
+    Color? iconColor,
     required VoidCallback? onPressed,
   }) {
     return Material(
@@ -474,7 +580,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
             padding: const EdgeInsets.all(16.0),
             child: Icon(
               icon,
-              color: Colors.white,
+              color: iconColor ?? Colors.white,
               size: 32,
             ),
           ),

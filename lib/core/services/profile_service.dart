@@ -8,6 +8,9 @@ import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/core/services/nostr_relay_service.dart';
 import 'package:nostrface/core/services/discarded_profiles_service.dart';
 import 'package:nostrface/core/services/note_cache_service.dart';
+import 'package:nostrface/core/services/image_validation_service.dart';
+import 'package:nostrface/core/services/failed_images_service.dart';
+import 'package:nostrface/core/services/profile_readiness_service.dart';
 import 'package:nostrface/core/providers/app_providers.dart';
 import 'package:hive/hive.dart';
 import 'package:uuid/uuid.dart';
@@ -21,9 +24,13 @@ class ProfileService {
   final Map<String, NostrProfile> _profiles = {};
   final StreamController<NostrProfile> _profileStreamController = StreamController<NostrProfile>.broadcast();
   final Set<String> _followedProfiles = {};
+  final StreamController<Set<String>> _followedProfilesStreamController = StreamController<Set<String>>.broadcast();
   
   // Cache service for notes
   final NoteCacheService _noteCacheService = NoteCacheService();
+  
+  // Image validation service
+  final ImageValidationService _imageValidationService = ImageValidationService();
   
   
   ProfileService(this._relayUrls) {
@@ -34,6 +41,7 @@ class ProfileService {
   
   Stream<NostrProfile> get profileStream => _profileStreamController.stream;
   Set<String> get followedProfiles => _followedProfiles;
+  Stream<Set<String>> get followedProfilesStream => _followedProfilesStreamController.stream;
   
   /// Get the relay URLs for connecting to Nostr network
   List<String> get relayUrls => List.unmodifiable(_relayUrls);
@@ -295,7 +303,7 @@ class ProfileService {
   }
   
   /// Discover random profiles from the relays
-  Future<List<NostrProfile>> discoverProfiles({int limit = 10, DiscardedProfilesService? discardedService}) async {
+  Future<List<NostrProfile>> discoverProfiles({int limit = 10, DiscardedProfilesService? discardedService, FailedImagesService? failedImagesService, bool checkPosts = false}) async {
     // Increase the initial limit to account for filtering
     final initialLimit = limit * 3;
     
@@ -325,11 +333,14 @@ class ProfileService {
                 try {
                   final profile = NostrProfile.fromJson(jsonDecode(profileJson));
                   
-                  // Only consider profiles with pictures and not discarded
-                  if (profile.picture != null && profile.picture!.isNotEmpty) {
+                  // Only consider profiles with valid pictures, name/display name, and bio
+                  if (_isValidProfilePicture(profile.picture) && _hasRequiredProfileInfo(profile)) {
                     // Check if profile is discarded
                     if (discardedService == null || !discardedService.isDiscarded(profile.pubkey)) {
-                      candidateProfiles.add(profile);
+                      // Check if image has failed before
+                      if (failedImagesService == null || !failedImagesService.hasImageFailed(profile.picture!)) {
+                        candidateProfiles.add(profile);
+                      }
                     }
                   }
                 } catch (e) {
@@ -454,26 +465,68 @@ class ProfileService {
             
             final profile = NostrProfile.fromMetadataEvent(event.pubkey, content);
             
-            // Only add profiles with pictures for better UX and not discarded
-            if (profile.picture != null && profile.picture!.isNotEmpty) {
+            // Debug specific profile
+            if (profile.pubkey == 'f68e1aafc674201c8482f5081285e289252389e5f24a9f0f8c2c4965ee25e87a3') {
+              if (kDebugMode) {
+                print('Kevin Beaumont profile found:');
+                print('  Raw content: $content');
+                print('  Picture URL: ${profile.picture}');
+                print('  Name: ${profile.name}');
+                print('  DisplayName: ${profile.displayName}');
+                print('  About: ${profile.about}');
+                print('  Valid picture: ${_isValidProfilePicture(profile.picture)}');
+                print('  Has required info: ${_hasRequiredProfileInfo(profile)}');
+              }
+            }
+            
+            // Only add profiles with valid pictures, name/display name, and bio
+            final validPicture = _isValidProfilePicture(profile.picture);
+            final hasRequiredInfo = _hasRequiredProfileInfo(profile);
+            
+            if (validPicture && hasRequiredInfo) {
               // Check if profile is discarded
               if (discardedService == null || !discardedService.isDiscarded(profile.pubkey)) {
-                candidateProfiles.add(profile);
-                seenPubkeys.add(profile.pubkey);
-                
-                // Cache the profile
-                _profiles[profile.pubkey] = profile;
-                
-                // Save to storage asynchronously
-                _saveProfileToStorage(profile).catchError((e) {
-                  if (kDebugMode) {
-                    print('Error saving profile to storage: $e');
+                // Check if image has failed before
+                if (failedImagesService == null || !failedImagesService.hasImageFailed(profile.picture!)) {
+                  candidateProfiles.add(profile);
+                  seenPubkeys.add(profile.pubkey);
+                  
+                  // Cache the profile
+                  _profiles[profile.pubkey] = profile;
+                  
+                  // Save to storage asynchronously
+                  _saveProfileToStorage(profile).catchError((e) {
+                    if (kDebugMode) {
+                      print('Error saving profile to storage: $e');
+                    }
+                  });
+                  
+                  // We need to get enough candidates for filtering
+                  if (candidateProfiles.length >= initialLimit) {
+                    break;
                   }
-                });
-                
-                // We need to get enough candidates for filtering
-                if (candidateProfiles.length >= initialLimit) {
-                  break;
+                }
+              }
+            } else {
+              if (kDebugMode) {
+                if (!validPicture) {
+                  print('Filtered out profile ${profile.pubkey.substring(0, 8)} with invalid picture URL: ${profile.picture}');
+                  
+                  // Check if this is one of the problematic URLs the user mentioned
+                  final problematicUrls = [
+                    'https://media.misskeyusercontent.com/io/fbecabe1-d5e5-4c23-af51-74bce7197807.jpg',
+                    'https://poliverso.org/photo/profile/eventilinux.gif?ts=1665132509',
+                    'https://s3.solarcom.ch/headeravatarfederati/accounts/avatars/000/000/005/original/75f890c814bfb687.jpg',
+                  ];
+                  
+                  if (profile.picture != null && problematicUrls.contains(profile.picture)) {
+                    print('  ⚠️  This is one of the problematic URLs reported by user!');
+                  }
+                } else if (!hasRequiredInfo) {
+                  final hasName = (profile.name != null && profile.name!.trim().isNotEmpty && !profile.name!.startsWith('npub')) ||
+                                 (profile.displayName != null && profile.displayName!.trim().isNotEmpty && !profile.displayName!.startsWith('npub'));
+                  final hasBio = profile.about != null && profile.about!.trim().isNotEmpty;
+                  print('Filtered out profile ${profile.pubkey.substring(0, 8)} - Has name: $hasName, Has bio: $hasBio');
                 }
               }
             }
@@ -501,7 +554,45 @@ class ProfileService {
       print('Found ${candidateProfiles.length} candidate profiles');
     }
     
-    // Return profiles without trust filtering
+    // If checkPosts is enabled, filter profiles with posts in parallel
+    if (checkPosts && candidateProfiles.isNotEmpty) {
+      if (kDebugMode) {
+        print('Checking which profiles have posts...');
+      }
+      
+      // Check posts for candidates in batches
+      final profilesWithPosts = <NostrProfile>[];
+      const batchSize = 5;
+      
+      for (int i = 0; i < candidateProfiles.length && profilesWithPosts.length < limit; i += batchSize) {
+        final end = (i + batchSize < candidateProfiles.length) ? i + batchSize : candidateProfiles.length;
+        final batch = candidateProfiles.sublist(i, end);
+        
+        final results = await Future.wait(
+          batch.map((profile) async {
+            try {
+              final notes = await getUserNotes(profile.pubkey, limit: 1);
+              return (profile, notes.isNotEmpty);
+            } catch (e) {
+              return (profile, false);
+            }
+          }),
+        );
+        
+        for (final (profile, hasPosts) in results) {
+          if (hasPosts) {
+            profilesWithPosts.add(profile);
+            if (profilesWithPosts.length >= limit) break;
+          } else if (kDebugMode) {
+            print('Filtered out ${profile.displayNameOrName} - no posts');
+          }
+        }
+      }
+      
+      return profilesWithPosts;
+    }
+    
+    // Return profiles without post filtering
     return candidateProfiles.take(limit).toList();
   }
   
@@ -628,6 +719,57 @@ class ProfileService {
     return sortedEvents.take(limit).toList();
   }
   
+  /// Check if a profile picture URL is valid
+  bool _isValidProfilePicture(String? pictureUrl) {
+    if (pictureUrl == null || pictureUrl.isEmpty) {
+      return false;
+    }
+    
+    // Check if it's a valid URL
+    try {
+      final uri = Uri.parse(pictureUrl);
+      
+      // Must be http or https
+      if (!uri.hasScheme || (uri.scheme != 'http' && uri.scheme != 'https')) {
+        return false;
+      }
+      
+      // Must have a host
+      if (!uri.hasAuthority || uri.host.isEmpty) {
+        return false;
+      }
+      
+      // Use image validation service to check if the image can be loaded
+      return _imageValidationService.isValidImageUrl(pictureUrl);
+      
+    } catch (e) {
+      // Invalid URL
+      return false;
+    }
+  }
+  
+  /// Check if profile has required information (name/display_name and bio)
+  bool _hasRequiredProfileInfo(NostrProfile profile) {
+    // Must have either name or display_name (not just npub)
+    final hasName = profile.name != null && 
+                   profile.name!.trim().isNotEmpty && 
+                   !profile.name!.startsWith('npub');
+    
+    final hasDisplayName = profile.displayName != null && 
+                          profile.displayName!.trim().isNotEmpty &&
+                          !profile.displayName!.startsWith('npub');
+    
+    // Must have at least one name
+    if (!hasName && !hasDisplayName) {
+      return false;
+    }
+    
+    // Must have a bio/about
+    final hasBio = profile.about != null && profile.about!.trim().isNotEmpty;
+    
+    return hasBio;
+  }
+  
   /// Load the list of followed profiles from local storage
   Future<void> _loadFollowedProfiles() async {
     try {
@@ -637,6 +779,9 @@ class ProfileService {
       if (followed != null) {
         final List<dynamic> followedList = jsonDecode(followed);
         _followedProfiles.addAll(followedList.cast<String>());
+        
+        // Emit the initial set through the stream
+        _followedProfilesStreamController.add(Set<String>.from(_followedProfiles));
         
         if (kDebugMode) {
           print('Loaded ${_followedProfiles.length} followed profiles from local storage');
@@ -705,6 +850,9 @@ class ProfileService {
       // Save to local storage
       await _saveFollowedProfiles();
       
+      // Emit the updated set through the stream
+      _followedProfilesStreamController.add(Set<String>.from(_followedProfiles));
+      
       if (kDebugMode) {
         print('Loaded ${_followedProfiles.length} followed profiles from relays');
         print('Contact list created at: ${DateTime.fromMillisecondsSinceEpoch(latestContactList.created_at * 1000)}');
@@ -733,40 +881,59 @@ class ProfileService {
     return _followedProfiles.contains(pubkey);
   }
   
-  /// Follow or unfollow a profile
-  Future<RelayPublishResult> toggleFollowProfile(String pubkey, KeyManagementService keyService) async {
-    final bool isCurrentlyFollowed = _followedProfiles.contains(pubkey);
+  /// Optimistically follow a profile (update local state immediately)
+  void optimisticallyFollow(String pubkey) {
+    if (!_followedProfiles.contains(pubkey)) {
+      _followedProfiles.add(pubkey);
+      _saveFollowedProfiles();
+      // Emit the updated set through the stream
+      if (kDebugMode) {
+        print('Emitting updated followed set with ${_followedProfiles.length} profiles');
+        print('Stream has ${_followedProfilesStreamController.hasListener ? "listeners" : "no listeners"}');
+      }
+      _followedProfilesStreamController.add(Set<String>.from(_followedProfiles));
+      if (kDebugMode) {
+        print('Optimistically followed: $pubkey');
+      }
+    }
+  }
+  
+  /// Optimistically unfollow a profile (update local state immediately)
+  void optimisticallyUnfollow(String pubkey) {
+    if (_followedProfiles.contains(pubkey)) {
+      _followedProfiles.remove(pubkey);
+      _saveFollowedProfiles();
+      // Emit the updated set through the stream
+      if (kDebugMode) {
+        print('Emitting updated followed set with ${_followedProfiles.length} profiles after unfollow');
+        print('Stream has ${_followedProfilesStreamController.hasListener ? "listeners" : "no listeners"}');
+      }
+      _followedProfilesStreamController.add(Set<String>.from(_followedProfiles));
+      if (kDebugMode) {
+        print('Optimistically unfollowed: $pubkey');
+      }
+    }
+  }
+  
+  /// Publish follow event to relays in the background
+  Future<RelayPublishResult> publishFollowEvent(KeyManagementService keyService) async {
+    print('\n=== PUBLISH FOLLOW EVENT ===');
     
     // Check if user is logged in
     final String? currentUserPubkey = await keyService.getPublicKey();
     if (currentUserPubkey == null) {
-      if (kDebugMode) {
-        print('Cannot follow/unfollow: User not logged in');
-      }
+      print('ERROR: Cannot publish follow event: User not logged in');
       return RelayPublishResult(
         eventId: '',
         relayResults: {},
       );
     }
     
-    // Toggle the follow status
-    if (isCurrentlyFollowed) {
-      _followedProfiles.remove(pubkey);
-    } else {
-      _followedProfiles.add(pubkey);
-    }
-    
-    // Save to local storage
-    await _saveFollowedProfiles();
-    
-    // Create and publish a contact list event
     try {
       // Get the user's keychain for signing
       final keychain = await keyService.getKeychain();
       if (keychain == null) {
-        if (kDebugMode) {
-          print('Cannot create contact list: No keychain available');
-        }
+        print('ERROR: Cannot create contact list: No keychain available');
         return RelayPublishResult(
           eventId: '',
           relayResults: {},
@@ -786,12 +953,148 @@ class ProfileService {
         privkey: keychain.private,
       );
       
-      if (kDebugMode) {
-        print('Publishing contact list event:');
-        print('  Event ID: ${nostrEvent.id}');
-        print('  Following ${_followedProfiles.length} profiles');
-        print('  Tags: ${tags.length} profiles');
+      // Convert dart-nostr Event to our NostrEvent model for publishing
+      final eventData = {
+        'id': nostrEvent.id,
+        'pubkey': nostrEvent.pubkey,
+        'created_at': nostrEvent.createdAt,
+        'kind': nostrEvent.kind,
+        'tags': nostrEvent.tags,
+        'content': nostrEvent.content,
+        'sig': nostrEvent.sig,
+      };
+      
+      final event = NostrEvent.fromJson(eventData);
+      
+      // Publish to all connected relays
+      final Map<String, bool> relayResults = {};
+      
+      // If no relays are connected, try to initialize them
+      if (_relayServices.isEmpty || _relayServices.where((r) => r.isConnected).isEmpty) {
+        print('⚠️  No connected relays available, attempting to reconnect...');
+        await _initializeRelays();
+        await Future.delayed(const Duration(seconds: 2));
       }
+      
+      for (final relay in _relayServices) {
+        if (relay.isConnected) {
+          final published = await relay.publishEvent(event);
+          relayResults[relay.relayUrl] = published;
+          
+          if (!published) {
+            print('  ❌ Failed to publish to relay: ${relay.relayUrl}');
+          }
+        } else {
+          relayResults[relay.relayUrl] = false;
+        }
+      }
+      
+      final result = RelayPublishResult(
+        eventId: event.id,
+        relayResults: relayResults,
+      );
+      
+      if (kDebugMode) {
+        print('Published follow event to ${result.successCount}/${result.totalRelays} relays');
+      }
+      
+      return result;
+    } catch (e) {
+      print('ERROR: Failed to publish follow event: $e');
+      return RelayPublishResult(
+        eventId: '',
+        relayResults: {},
+      );
+    }
+  }
+  
+  /// Clean up resources
+  void dispose() {
+    if (!_profileStreamController.isClosed) {
+      _profileStreamController.close();
+    }
+    if (!_followedProfilesStreamController.isClosed) {
+      _followedProfilesStreamController.close();
+    }
+    // Close all relay connections
+    for (final relay in _relayServices) {
+      relay.disconnect();
+    }
+  }
+  
+  /// Follow or unfollow a profile
+  Future<RelayPublishResult> toggleFollowProfile(String pubkey, KeyManagementService keyService) async {
+    print('\n=== TOGGLE FOLLOW PROFILE ===');
+    print('Target pubkey: $pubkey');
+    
+    final bool isCurrentlyFollowed = _followedProfiles.contains(pubkey);
+    print('Currently followed: $isCurrentlyFollowed');
+    print('Total followed profiles: ${_followedProfiles.length}');
+    
+    // Check if user is logged in
+    print('Getting current user public key...');
+    final String? currentUserPubkey = await keyService.getPublicKey();
+    print('Current user pubkey: ${currentUserPubkey ?? "NULL"}');
+    
+    if (currentUserPubkey == null) {
+      print('ERROR: Cannot follow/unfollow: User not logged in');
+      return RelayPublishResult(
+        eventId: '',
+        relayResults: {},
+      );
+    }
+    
+    // Toggle the follow status
+    if (isCurrentlyFollowed) {
+      _followedProfiles.remove(pubkey);
+    } else {
+      _followedProfiles.add(pubkey);
+    }
+    
+    // Save to local storage
+    await _saveFollowedProfiles();
+    
+    // Emit the updated set through the stream
+    _followedProfilesStreamController.add(Set<String>.from(_followedProfiles));
+    
+    // Create and publish a contact list event
+    try {
+      // Get the user's keychain for signing
+      print('Getting keychain for signing...');
+      final keychain = await keyService.getKeychain();
+      if (keychain == null) {
+        print('ERROR: Cannot create contact list: No keychain available');
+        return RelayPublishResult(
+          eventId: '',
+          relayResults: {},
+        );
+      }
+      print('Keychain obtained successfully');
+      print('Public key from keychain: ${keychain.public}');
+      
+      // Create tags for each followed profile
+      final List<List<String>> tags = _followedProfiles
+          .map((followedPubkey) => ['p', followedPubkey])
+          .toList();
+      
+      // Create the event using dart-nostr
+      print('Creating contact list event...');
+      print('  Kind: 3 (contact list)');
+      print('  Tags: ${tags.length} profiles');
+      print('  First few tags: ${tags.take(3).toList()}');
+      
+      final nostrEvent = nostr.Event.from(
+        kind: 3, // Contact list kind
+        tags: tags,
+        content: '', // Contact list events typically have empty content
+        privkey: keychain.private,
+      );
+      
+      print('Event created successfully:');
+      print('  Event ID: ${nostrEvent.id}');
+      print('  Public key: ${nostrEvent.pubkey}');
+      print('  Created at: ${nostrEvent.createdAt}');
+      print('  Signature: ${nostrEvent.sig.substring(0, 20)}...');
       
       // Convert dart-nostr Event to our NostrEvent model for publishing
       final eventData = {
@@ -815,6 +1118,16 @@ class ProfileService {
         print('Event JSON: ${jsonEncode(eventData)}');
         print('Event ID: ${event.id}');
         print('Signature: ${event.sig}');
+        print('Connected relays: ${_relayServices.where((r) => r.isConnected).length}/${_relayServices.length}');
+      }
+      
+      // If no relays are connected, try to initialize them
+      if (_relayServices.isEmpty || _relayServices.where((r) => r.isConnected).isEmpty) {
+        print('⚠️  No connected relays available, attempting to reconnect...');
+        await _initializeRelays();
+        
+        // Give connections time to establish
+        await Future.delayed(const Duration(seconds: 2));
       }
       
       for (final relay in _relayServices) {
@@ -831,9 +1144,8 @@ class ProfileService {
               print('  ✅ Published to relay: ${relay.relayUrl}');
             }
           } else {
-            if (kDebugMode) {
-              print('  ❌ Failed to publish to relay: ${relay.relayUrl}');
-            }
+            // Always log failures, not just in debug mode
+            print('  ❌ Failed to publish to relay: ${relay.relayUrl}');
           }
         } else {
           relayResults[relay.relayUrl] = false;
@@ -866,16 +1178,17 @@ class ProfileService {
       }
       
       return result;
-    } catch (e) {
-      if (kDebugMode) {
-        print('Error publishing follow event: $e');
-      }
+    } catch (e, stackTrace) {
+      print('ERROR: Failed to publish follow event');
+      print('  Exception: $e');
+      print('  Stack trace: $stackTrace');
       return RelayPublishResult(
         eventId: '',
         relayResults: {},
       );
     }
   }
+  
 }
 
 /// Provider for the profile service 
@@ -896,9 +1209,33 @@ final profileDiscoveryProvider = FutureProvider<List<NostrProfile>>((ref) async 
   return await profileService.discoverProfiles();
 });
 
-final isProfileFollowedProvider = Provider.family<bool, String>((ref, pubkey) {
+final isProfileFollowedProvider = StreamProvider.family<bool, String>((ref, pubkey) {
   final profileService = ref.watch(profileServiceProvider);
-  return profileService.isProfileFollowed(pubkey);
+  
+  // Create a stream that immediately emits the current state
+  // then continues to emit updates from the followed profiles stream
+  return Stream<bool>.multi((controller) {
+    // Emit the current state immediately
+    final initialState = profileService.isProfileFollowed(pubkey);
+    if (kDebugMode) {
+      print('isProfileFollowedProvider($pubkey): Initial state = $initialState');
+    }
+    controller.add(initialState);
+    
+    // Listen to the stream for updates
+    final subscription = profileService.followedProfilesStream.listen((followedSet) {
+      final newState = followedSet.contains(pubkey);
+      if (kDebugMode) {
+        print('isProfileFollowedProvider($pubkey): Stream update = $newState');
+      }
+      controller.add(newState);
+    });
+    
+    // Clean up the subscription when the stream is closed
+    controller.onCancel = () {
+      subscription.cancel();
+    };
+  });
 });
 
 final followProfileProvider = FutureProvider.family<RelayPublishResult, String>((ref, pubkey) async {
@@ -907,10 +1244,19 @@ final followProfileProvider = FutureProvider.family<RelayPublishResult, String>(
   return await profileService.toggleFollowProfile(pubkey, keyService);
 });
 
+/// Provider for publishing follow events in the background (after optimistic updates)
+final publishFollowEventProvider = FutureProvider<RelayPublishResult>((ref) async {
+  final profileService = ref.watch(profileServiceProvider);
+  final keyService = ref.watch(keyManagementServiceProvider);
+  return await profileService.publishFollowEvent(keyService);
+});
+
 /// Service for managing a buffer of profiles
 class ProfileBufferService {
   final ProfileService _profileService;
   final DiscardedProfilesService? _discardedService;
+  final FailedImagesService? _failedImagesService;
+  final ProfileReadinessService _readinessService = ProfileReadinessService();
   
   // Configuration for progressive loading
   static const int _initialLoadCount = 5;
@@ -919,8 +1265,13 @@ class ProfileBufferService {
   
   // This list will persist in memory as long as the app is running
   final List<NostrProfile> _profileBuffer = [];
+  
+  // Staging area for profiles being prepared
+  final List<NostrProfile> _stagingBuffer = [];
+  
   bool _isFetching = false;
   bool _isLoadingInitial = false;
+  bool _isPreparingProfiles = false;
   
   // Track the last viewed index to restore position
   int _lastViewedIndex = 0;
@@ -931,7 +1282,7 @@ class ProfileBufferService {
   final StreamController<List<NostrProfile>> _bufferStreamController = 
       StreamController<List<NostrProfile>>.broadcast();
   
-  ProfileBufferService(this._profileService, [this._discardedService]) {
+  ProfileBufferService(this._profileService, [this._discardedService, this._failedImagesService]) {
     // Initialize the buffer with initial profiles - but only once
     if (!_hasInitializedBuffer) {
       _loadInitialProfiles();
@@ -974,18 +1325,23 @@ class ProfileBufferService {
       }
       
       // Fetch initial profiles
-      final initialProfiles = await _profileService.discoverProfiles(
-        limit: _initialLoadCount,
+      final candidateProfiles = await _profileService.discoverProfiles(
+        limit: _initialLoadCount * 3, // Fetch more to account for filtering
         discardedService: _discardedService,
+        failedImagesService: _failedImagesService,
       );
       
-      if (initialProfiles.isNotEmpty) {
-        _profileBuffer.addAll(initialProfiles);
+      if (candidateProfiles.isNotEmpty) {
+        // Add to staging buffer
+        _stagingBuffer.addAll(candidateProfiles);
+        
+        // Prepare profiles for presentation
+        await _prepareProfilesForPresentation();
+        
         _hasInitializedBuffer = true;
-        _notifyListeners();
         
         if (kDebugMode) {
-          print('Loaded ${initialProfiles.length} initial profiles');
+          print('Initial profiles ready: ${_profileBuffer.length}');
         }
         
         // Start background loading of more profiles
@@ -1009,33 +1365,38 @@ class ProfileBufferService {
     
     try {
       if (kDebugMode) {
-        print('Loading $_batchLoadCount more profiles in background...');
+        print('Loading more profiles in background...');
       }
       
       // Fetch new profiles
       final newProfiles = await _profileService.discoverProfiles(
-        limit: _batchLoadCount,
+        limit: _batchLoadCount * 2, // Fetch more to account for preparation filtering
         discardedService: _discardedService,
+        failedImagesService: _failedImagesService,
       );
       
-      // Filter out profiles that are already in the buffer
-      final existingPubkeys = _profileBuffer.map((p) => p.pubkey).toSet();
+      // Filter out profiles that are already in buffers
+      final existingPubkeys = {..._profileBuffer.map((p) => p.pubkey), ..._stagingBuffer.map((p) => p.pubkey)};
       final uniqueNewProfiles = newProfiles
           .where((profile) => !existingPubkeys.contains(profile.pubkey))
           .toList();
         
       if (uniqueNewProfiles.isNotEmpty) {
-        // Add to buffer
-        _profileBuffer.addAll(uniqueNewProfiles);
-        _notifyListeners();
+        // Add to staging buffer
+        _stagingBuffer.addAll(uniqueNewProfiles);
         
         if (kDebugMode) {
-          print('Added ${uniqueNewProfiles.length} profiles to buffer. Total: ${_profileBuffer.length}');
+          print('Added ${uniqueNewProfiles.length} profiles to staging. Staging: ${_stagingBuffer.length}');
+        }
+        
+        // Prepare profiles if not already preparing
+        if (!_isPreparingProfiles) {
+          _prepareProfilesForPresentation();
         }
         
         // Continue loading more profiles in background
         // Short delay to avoid overloading relays
-        await Future.delayed(const Duration(seconds: 1));
+        await Future.delayed(const Duration(seconds: 2));
         _loadMoreProfiles(); // Recursive call to continue loading
       } else {
         if (kDebugMode) {
@@ -1051,6 +1412,113 @@ class ProfileBufferService {
     }
   }
   
+  /// Prepare profiles from staging buffer for presentation
+  Future<void> _prepareProfilesForPresentation() async {
+    if (_isPreparingProfiles || _stagingBuffer.isEmpty) return;
+    
+    _isPreparingProfiles = true;
+    
+    try {
+      if (kDebugMode) {
+        print('Preparing ${_stagingBuffer.length} profiles for presentation...');
+      }
+      
+      final readyProfiles = <NostrProfile>[];
+      final failedProfiles = <NostrProfile>[];
+      
+      // Process profiles in small batches to avoid blocking
+      const batchSize = 3;
+      
+      while (_stagingBuffer.isNotEmpty && readyProfiles.length < _batchLoadCount) {
+        // Take a batch from staging
+        final batch = _stagingBuffer.take(batchSize).toList();
+        _stagingBuffer.removeRange(0, batch.length.clamp(0, _stagingBuffer.length));
+        
+        // Check each profile in parallel
+        final results = await Future.wait(
+          batch.map((profile) async {
+            // First, get user's post count
+            int postCount = 0;
+            try {
+              final notes = await _profileService.getUserNotes(profile.pubkey, limit: 1);
+              postCount = notes.isNotEmpty ? 1 : 0; // We just need to know if they have any posts
+              
+              // If we found at least one, assume they have posts
+              if (postCount > 0) {
+                _readinessService.updatePostCount(profile.pubkey, postCount);
+              }
+            } catch (e) {
+              if (kDebugMode) {
+                print('Failed to fetch posts for ${profile.displayNameOrName}: $e');
+              }
+            }
+            
+            // Check if profile is ready (including post count check)
+            final isReady = await _readinessService.isProfileReady(profile, postCount: postCount);
+            
+            if (!isReady && profile.picture != null && postCount > 0) {
+              // Try to preload the image only if they have posts
+              final preloaded = await _readinessService.preloadProfileImage(profile);
+              return (profile, preloaded);
+            }
+            
+            return (profile, isReady);
+          }),
+        );
+        
+        // Separate ready and failed profiles
+        for (final (profile, isReady) in results) {
+          if (isReady) {
+            readyProfiles.add(profile);
+          } else {
+            failedProfiles.add(profile);
+            
+            // Mark the image as failed if it couldn't be preloaded
+            if (profile.picture != null && _failedImagesService != null) {
+              await _failedImagesService!.markImageAsFailed(profile.picture!);
+            }
+          }
+        }
+        
+        // Add ready profiles to main buffer immediately
+        if (readyProfiles.isNotEmpty) {
+          _profileBuffer.addAll(readyProfiles);
+          // Delay notification to avoid lifecycle issues
+          Future.microtask(() => _notifyListeners());
+          readyProfiles.clear();
+        }
+        
+        // Small delay between batches
+        if (_stagingBuffer.isNotEmpty) {
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
+      }
+      
+      if (kDebugMode) {
+        print('Preparation complete. Ready: ${_profileBuffer.length}, Failed: ${failedProfiles.length}, Staging: ${_stagingBuffer.length}');
+      }
+      
+      // If buffer is running low, trigger more loading
+      if (_profileBuffer.length < _prefetchThreshold * 2 && !_isFetching) {
+        _loadMoreProfiles();
+      }
+      
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error preparing profiles: $e');
+      }
+    } finally {
+      _isPreparingProfiles = false;
+      
+      // Continue preparing if there are more profiles in staging
+      if (_stagingBuffer.isNotEmpty) {
+        Future.delayed(const Duration(seconds: 1), () {
+          _prepareProfilesForPresentation();
+        });
+      }
+    }
+  }
+  
   /// Check if we need to prefetch more profiles
   void checkBufferState(int currentIndex) {
     // Update last viewed index
@@ -1061,9 +1529,14 @@ class ProfileBufferService {
         _profileBuffer.isNotEmpty && 
         currentIndex >= _profileBuffer.length - _prefetchThreshold) {
       if (kDebugMode) {
-        print('User at index $currentIndex, loading more profiles...');
+        print('User at index $currentIndex (${_profileBuffer.length} ready, ${_stagingBuffer.length} staging), loading more...');
       }
       _loadMoreProfiles();
+    }
+    
+    // Also trigger preparation if staging buffer has profiles
+    if (!_isPreparingProfiles && _stagingBuffer.isNotEmpty) {
+      _prepareProfilesForPresentation();
     }
   }
   
@@ -1080,24 +1553,35 @@ class ProfileBufferService {
   /// Remove a profile from the buffer (e.g., when user skips)
   void removeProfile(String pubkey) {
     _profileBuffer.removeWhere((profile) => profile.pubkey == pubkey);
+    _stagingBuffer.removeWhere((profile) => profile.pubkey == pubkey);
     _notifyListeners();
     
     // Check if we need to load more profiles
     if (_profileBuffer.length < _prefetchThreshold * 2) {
       _loadMoreProfiles();
     }
+    
+    // Trigger preparation if needed
+    if (!_isPreparingProfiles && _stagingBuffer.isNotEmpty) {
+      _prepareProfilesForPresentation();
+    }
   }
   
   /// Refresh the entire buffer (e.g., when user pulls to refresh)
   Future<void> refreshBuffer() async {
-    // Clear the buffer but keep track of initialization state
+    // Clear both buffers
     _profileBuffer.clear();
+    _stagingBuffer.clear();
     _notifyListeners();
     
     // Force re-fetching of profiles by temporarily resetting the initialized flag
     _hasInitializedBuffer = false;
     _isFetching = false;
     _isLoadingInitial = false;
+    _isPreparingProfiles = false;
+    
+    // Clear readiness cache to force fresh checks
+    _readinessService.clearCache();
     
     // Start fresh with initial load
     await _loadInitialProfiles();
@@ -1119,8 +1603,8 @@ class ProfileBufferService {
 class ProfileBufferServiceSingleton {
   static ProfileBufferService? _instance;
   
-  static ProfileBufferService getInstance(ProfileService profileService, DiscardedProfilesService? discardedService) {
-    _instance ??= ProfileBufferService(profileService, discardedService);
+  static ProfileBufferService getInstance(ProfileService profileService, DiscardedProfilesService? discardedService, FailedImagesService? failedImagesService) {
+    _instance ??= ProfileBufferService(profileService, discardedService, failedImagesService);
     return _instance!;
   }
 }
@@ -1129,8 +1613,9 @@ class ProfileBufferServiceSingleton {
 final profileBufferServiceProvider = Provider<ProfileBufferService>((ref) {
   final profileService = ref.watch(profileServiceProvider);
   final discardedService = ref.watch(discardedProfilesServiceProvider);
+  final failedImagesService = ref.watch(failedImagesServiceProvider);
   // Use singleton pattern to ensure same instance persists
-  return ProfileBufferServiceSingleton.getInstance(profileService, discardedService);
+  return ProfileBufferServiceSingleton.getInstance(profileService, discardedService, failedImagesService);
 });
 
 /// Stream provider for buffered profiles with no auto-dispose

@@ -11,7 +11,7 @@ class RelayPublishResult {
   }) : successCount = relayResults.values.where((v) => v).length,
        totalRelays = relayResults.length;
   
-  bool get isSuccess => successCount >= 2; // At least 2 relays
+  bool get isSuccess => totalRelays > 0 && successCount > 0; // At least 1 successful relay
   
   double get successRate => totalRelays > 0 ? successCount / totalRelays : 0.0;
   

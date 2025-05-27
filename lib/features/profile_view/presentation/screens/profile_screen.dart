@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -38,6 +39,15 @@ class ProfileScreen extends ConsumerWidget {
             );
           }
           
+          // Debug logging
+          if (kDebugMode) {
+            print('Profile View - pubkey: ${profile.pubkey}');
+            print('Profile View - picture URL: ${profile.picture}');
+            print('Profile View - name: ${profile.name}');
+            print('Profile View - displayName: ${profile.displayName}');
+            print('Profile View - about: ${profile.about}');
+          }
+          
           return CustomScrollView(
             slivers: [
               SliverAppBar(
@@ -74,7 +84,8 @@ class ProfileScreen extends ConsumerWidget {
                 actions: [
                   Consumer(
                     builder: (context, ref, child) {
-                      final isFollowed = ref.watch(isProfileFollowedProvider(profileId));
+                      final isFollowedAsync = ref.watch(isProfileFollowedProvider(profileId));
+                      final isFollowed = isFollowedAsync.valueOrNull ?? false;
                       
                       return IconButton(
                         icon: Icon(isFollowed ? Icons.favorite : Icons.favorite_border),
@@ -114,42 +125,52 @@ class ProfileScreen extends ConsumerWidget {
                             return;
                           }
                           
-                          // Follow/unfollow user
-                          final result = await ref.read(followProfileProvider(profileId).future);
+                          // Optimistically update the UI immediately
+                          final profileService = ref.read(profileServiceProvider);
+                          if (isFollowed) {
+                            profileService.optimisticallyUnfollow(profileId);
+                          } else {
+                            profileService.optimisticallyFollow(profileId);
+                          }
                           
-                          if (result.isSuccess && context.mounted) {
-                            // Get profile name for feedback
+                          // Show immediate feedback
+                          if (context.mounted) {
                             final profileName = profile.displayNameOrName;
+                            final message = isFollowed 
+                              ? 'Unfollowing $profileName...' 
+                              : 'Following $profileName...';
                             
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      isFollowed ? 'Unfollowed $profileName' : 'Following $profileName'
-                                    ),
-                                    Text(
-                                      'Published to ${result.successCount}/${result.totalRelays} relays',
-                                      style: Theme.of(context).textTheme.bodySmall,
-                                    ),
-                                  ],
-                                ),
-                                duration: const Duration(seconds: 3),
-                              ),
-                            );
-                          } else if (!result.isSuccess && context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'Failed to publish follow event (${result.successCount}/${result.totalRelays} relays)'
-                                ),
-                                backgroundColor: Colors.red,
-                                duration: const Duration(seconds: 3),
+                                content: Text(message),
+                                duration: const Duration(seconds: 1),
                               ),
                             );
                           }
+                          
+                          // Publish to relays in the background
+                          ref.read(publishFollowEventProvider.future).then((result) {
+                            if (!result.isSuccess) {
+                              // Revert the optimistic update if failed
+                              if (isFollowed) {
+                                profileService.optimisticallyFollow(profileId);
+                              } else {
+                                profileService.optimisticallyUnfollow(profileId);
+                              }
+                              
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Failed to publish follow event (${result.successCount}/${result.totalRelays} relays)'
+                                    ),
+                                    backgroundColor: Colors.red,
+                                    duration: const Duration(seconds: 3),
+                                  ),
+                                );
+                              }
+                            }
+                          });
                         },
                       );
                     },

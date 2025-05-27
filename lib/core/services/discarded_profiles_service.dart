@@ -69,13 +69,7 @@ class DiscardedProfilesService {
   int get discardedCount => _discardedPubkeys.length;
 }
 
-// Provider for the service
-final discardedProfilesServiceProvider = Provider<DiscardedProfilesService>((ref) {
-  return DiscardedProfilesService();
-});
-
 // Provider for discarded count
 final discardedProfilesCountProvider = StateProvider<int>((ref) {
-  final service = ref.watch(discardedProfilesServiceProvider);
-  return service.discardedCount;
+  return 0; // Will be updated when profiles are discarded
 });

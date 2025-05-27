@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class ProfileCard extends StatelessWidget {
@@ -7,6 +8,7 @@ class ProfileCard extends StatelessWidget {
   final String bio;
   final VoidCallback onTap;
   final bool isFollowed;
+  final Function(String imageUrl)? onImageError;
 
   const ProfileCard({
     Key? key,
@@ -15,6 +17,7 @@ class ProfileCard extends StatelessWidget {
     required this.bio,
     required this.onTap,
     this.isFollowed = false,
+    this.onImageError,
   }) : super(key: key);
 
   @override
@@ -38,12 +41,33 @@ class ProfileCard extends StatelessWidget {
                 placeholder: (context, url) => const Center(
                   child: CircularProgressIndicator(),
                 ),
-                errorWidget: (context, url, error) => Container(
-                  color: Colors.grey[300],
-                  child: const Center(
-                    child: Icon(Icons.error, size: 50),
-                  ),
-                ),
+                errorWidget: (context, url, error) {
+                  if (kDebugMode) {
+                    print('ProfileCard image failed to load:');
+                    print('  URL: $url');
+                    print('  Error: $error');
+                    print('  Error type: ${error.runtimeType}');
+                  }
+                  
+                  // Report the error to parent if callback provided
+                  if (onImageError != null) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      onImageError!(url);
+                    });
+                  }
+                  
+                  // Show a default avatar icon instead of error
+                  return Container(
+                    color: Colors.grey[300],
+                    child: Center(
+                      child: Icon(
+                        Icons.person,
+                        size: 50,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
             Expanded(

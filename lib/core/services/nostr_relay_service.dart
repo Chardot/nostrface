@@ -337,12 +337,16 @@ class NostrRelayService {
             final bool success = parsed[2] as bool;
             final String message = parsed.length > 3 ? parsed[3] : '';
             
-            if (kDebugMode) {
+            // Always log OK responses for follow events
+            if (kDebugMode || !success || eventId.contains('contact')) {
               print('\n=== OK RESPONSE FROM $relayUrl ===');
               print('Event ID: $eventId');
               print('Accepted: $success');
               if (message.isNotEmpty) {
                 print('Message: $message');
+              }
+              if (!success) {
+                print('REJECTION REASON: ${message.isEmpty ? "No reason provided" : message}');
               }
               print('================================\n');
             }

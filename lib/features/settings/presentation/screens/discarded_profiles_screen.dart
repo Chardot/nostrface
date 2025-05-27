@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nostrface/core/services/discarded_profiles_service.dart';
 import 'package:nostrface/core/services/profile_service.dart';
+import 'package:nostrface/core/providers/app_providers.dart';
 import 'package:logging/logging.dart';
 
 class DiscardedProfilesScreen extends ConsumerStatefulWidget {

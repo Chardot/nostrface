@@ -56,10 +56,12 @@ class KeyManagementService {
         privateKey = await _secureStorage.read(key: _privateKeyKey);
       }
       
-      if (kDebugMode) {
-        print('Checking if private key exists: ${privateKey != null && privateKey.isNotEmpty}');
+      final exists = privateKey != null && privateKey.isNotEmpty;
+      print('KeyManagementService.hasPrivateKey: $exists');
+      if (exists) {
+        print('  Private key length: ${privateKey!.length} chars');
       }
-      return privateKey != null && privateKey.isNotEmpty;
+      return exists;
     } catch (e) {
       if (kDebugMode) {
         print('Error checking for private key: $e');
@@ -70,19 +72,21 @@ class KeyManagementService {
   
   /// Get the stored public key
   Future<String?> getPublicKey() async {
+    print('KeyManagementService.getPublicKey called');
     try {
+      String? pubkey;
       if (kIsWeb) {
         // For web, use Hive
         await _ensureWebStorage();
-        return _webStorageBox?.get(_publicKeyKey);
+        pubkey = _webStorageBox?.get(_publicKeyKey);
       } else {
         // For native platforms, use secure storage
-        return await _secureStorage.read(key: _publicKeyKey);
+        pubkey = await _secureStorage.read(key: _publicKeyKey);
       }
+      print('  Public key: ${pubkey != null ? "${pubkey.substring(0, 10)}..." : "NULL"}');
+      return pubkey;
     } catch (e) {
-      if (kDebugMode) {
-        print('Error getting public key: $e');
-      }
+      print('ERROR getting public key: $e');
       return null;
     }
   }
@@ -235,19 +239,24 @@ class KeyManagementService {
     await storePrivateKey(keychain.private);
   }
   
+  
   /// Get the Keychain object for signing
   Future<nostr.Keychain?> getKeychain() async {
+    print('KeyManagementService.getKeychain called');
     final String? privateKey = await getPrivateKey();
     if (privateKey == null) {
+      print('  No private key found');
       return null;
     }
     
     try {
-      return nostr.Keychain(privateKey);
+      print('  Creating keychain from private key...');
+      final keychain = nostr.Keychain(privateKey);
+      print('  Keychain created successfully');
+      print('  Public key: ${keychain.public.substring(0, 10)}...');
+      return keychain;
     } catch (e) {
-      if (kDebugMode) {
-        print('Error creating keychain: $e');
-      }
+      print('ERROR creating keychain: $e');
       return null;
     }
   }
