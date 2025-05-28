@@ -24,7 +24,10 @@ class ProfileService {
   final Map<String, NostrProfile> _profiles = {};
   final StreamController<NostrProfile> _profileStreamController = StreamController<NostrProfile>.broadcast();
   final Set<String> _followedProfiles = {};
-  final StreamController<Set<String>> _followedProfilesStreamController = StreamController<Set<String>>.broadcast();
+  final StreamController<Set<String>> _followedProfilesStreamController = StreamController<Set<String>>.broadcast(
+    onListen: () => print('[Stream] First listener subscribed to followedProfilesStream'),
+    onCancel: () => print('[Stream] Last listener unsubscribed from followedProfilesStream'),
+  );
   
   // Cache service for notes
   final NoteCacheService _noteCacheService = NoteCacheService();
@@ -36,6 +39,19 @@ class ProfileService {
   ProfileService(this._relayUrls) {
     _initializeRelays();
     _loadFollowedProfiles();
+    _preOpenFollowedBox(); // Pre-open the box to avoid delays
+  }
+  
+  /// Pre-open the followed profiles box to avoid delays on first follow
+  Future<void> _preOpenFollowedBox() async {
+    try {
+      print('[ProfileService] Pre-opening followed_profiles box...');
+      final box = await Hive.openBox<String>('followed_profiles');
+      print('[ProfileService] Followed profiles box pre-opened successfully');
+      // Keep the box open for faster access
+    } catch (e) {
+      print('[ProfileService] Error pre-opening followed profiles box: $e');
+    }
   }
   
   
@@ -49,16 +65,10 @@ class ProfileService {
   
   /// Initialize relay connections from a list of URLs
   Future<void> _initializeRelaysFromUrls(List<String> urls) async {
-    if (kDebugMode) {
-      print('Initializing connections to ${urls.length} relays');
-    }
     
     // In web, we'll try to connect to all relays, but use a timeout to avoid waiting too long
     final connectFutures = urls.map((relayUrl) async {
       try {
-        if (kDebugMode) {
-          print('Attempting to connect to relay: $relayUrl');
-        }
         
         final relay = NostrRelayService(relayUrl);
         final connected = await relay.connect().timeout(
@@ -72,9 +82,6 @@ class ProfileService {
         );
         
         if (connected) {
-          if (kDebugMode) {
-            print('Successfully connected to relay: $relayUrl');
-          }
           
           _relayServices.add(relay);
           
@@ -112,8 +119,8 @@ class ProfileService {
     );
     
     final connectedCount = results.where((result) => result).length;
-    if (kDebugMode) {
-      print('Connected to $connectedCount out of ${urls.length} relays');
+    if (kDebugMode && connectedCount < urls.length) {
+      print('[ProfileService] Connected to $connectedCount/${urls.length} relays');
     }
   }
   
@@ -377,18 +384,13 @@ class ProfileService {
     List<Future<List<NostrEvent>>> queries = [];
     for (final relay in _relayServices) {
       if (relay.isConnected) {
-        if (kDebugMode) {
-          print('Fetching profiles from ${relay.relayUrl}');
-        }
+        // Don't log each relay query - too noisy
         queries.add(relay.subscribe(filter, timeout: const Duration(seconds: 15)));
       }
     }
     
     // Handle empty queries case
     if (queries.isEmpty) {
-      if (kDebugMode) {
-        print('No connected relays to query');
-      }
       return [];
     }
     
@@ -816,9 +818,6 @@ class ProfileService {
     }
     
     if (queries.isEmpty) {
-      if (kDebugMode) {
-        print('No connected relays to query for contact list');
-      }
       return;
     }
     
@@ -883,35 +882,67 @@ class ProfileService {
   
   /// Optimistically follow a profile (update local state immediately)
   void optimisticallyFollow(String pubkey) {
+    final stopwatch = Stopwatch()..start();
+    print('[ProfileService.optimisticallyFollow] Starting for $pubkey');
+    
     if (!_followedProfiles.contains(pubkey)) {
+      print('[${stopwatch.elapsedMilliseconds}ms] Adding to followed set');
       _followedProfiles.add(pubkey);
-      _saveFollowedProfiles();
-      // Emit the updated set through the stream
+      
+      // Emit the updated set through the stream IMMEDIATELY before saving
       if (kDebugMode) {
-        print('Emitting updated followed set with ${_followedProfiles.length} profiles');
+        print('[${stopwatch.elapsedMilliseconds}ms] Emitting updated followed set with ${_followedProfiles.length} profiles');
         print('Stream has ${_followedProfilesStreamController.hasListener ? "listeners" : "no listeners"}');
       }
+      
+      print('[${stopwatch.elapsedMilliseconds}ms] Adding to stream controller...');
       _followedProfilesStreamController.add(Set<String>.from(_followedProfiles));
+      print('[${stopwatch.elapsedMilliseconds}ms] Stream emission complete');
+      
+      // Save to storage in the background - don't await to avoid blocking UI
+      print('[${stopwatch.elapsedMilliseconds}ms] Saving to storage in background...');
+      _saveFollowedProfiles().catchError((e) {
+        print('[Background] Error saving followed profiles: $e');
+      });
+      
       if (kDebugMode) {
-        print('Optimistically followed: $pubkey');
+        print('[${stopwatch.elapsedMilliseconds}ms] Optimistically followed: $pubkey');
       }
+    } else {
+      print('[${stopwatch.elapsedMilliseconds}ms] Already following $pubkey');
     }
   }
   
   /// Optimistically unfollow a profile (update local state immediately)
   void optimisticallyUnfollow(String pubkey) {
+    final stopwatch = Stopwatch()..start();
+    print('[ProfileService.optimisticallyUnfollow] Starting for $pubkey');
+    
     if (_followedProfiles.contains(pubkey)) {
+      print('[${stopwatch.elapsedMilliseconds}ms] Removing from followed set');
       _followedProfiles.remove(pubkey);
-      _saveFollowedProfiles();
-      // Emit the updated set through the stream
+      
+      // Emit the updated set through the stream IMMEDIATELY before saving
       if (kDebugMode) {
-        print('Emitting updated followed set with ${_followedProfiles.length} profiles after unfollow');
+        print('[${stopwatch.elapsedMilliseconds}ms] Emitting updated followed set with ${_followedProfiles.length} profiles after unfollow');
         print('Stream has ${_followedProfilesStreamController.hasListener ? "listeners" : "no listeners"}');
       }
+      
+      print('[${stopwatch.elapsedMilliseconds}ms] Adding to stream controller...');
       _followedProfilesStreamController.add(Set<String>.from(_followedProfiles));
+      print('[${stopwatch.elapsedMilliseconds}ms] Stream emission complete');
+      
+      // Save to storage in the background - don't await to avoid blocking UI
+      print('[${stopwatch.elapsedMilliseconds}ms] Saving to storage in background...');
+      _saveFollowedProfiles().catchError((e) {
+        print('[Background] Error saving followed profiles: $e');
+      });
+      
       if (kDebugMode) {
-        print('Optimistically unfollowed: $pubkey');
+        print('[${stopwatch.elapsedMilliseconds}ms] Optimistically unfollowed: $pubkey');
       }
+    } else {
+      print('[${stopwatch.elapsedMilliseconds}ms] Not following $pubkey');
     }
   }
   
@@ -994,8 +1025,9 @@ class ProfileService {
         relayResults: relayResults,
       );
       
-      if (kDebugMode) {
-        print('Published follow event to ${result.successCount}/${result.totalRelays} relays');
+      // Log concisely
+      if (!result.isSuccess && kDebugMode) {
+        print('[Follow] Failed to publish: ${result.successCount}/${result.totalRelays} relays');
       }
       
       return result;
@@ -1210,26 +1242,33 @@ final profileDiscoveryProvider = FutureProvider<List<NostrProfile>>((ref) async 
 });
 
 final isProfileFollowedProvider = StreamProvider.family<bool, String>((ref, pubkey) {
+  print('[Provider Creation] isProfileFollowedProvider being created for ${pubkey.substring(0, 8)}...');
   final profileService = ref.watch(profileServiceProvider);
   
   // Create a stream that immediately emits the current state
   // then continues to emit updates from the followed profiles stream
   return Stream<bool>.multi((controller) {
+    final providerStopwatch = Stopwatch()..start();
+    print('[${providerStopwatch.elapsedMilliseconds}ms] Stream.multi callback started for ${pubkey.substring(0, 8)}...');
+    
     // Emit the current state immediately
     final initialState = profileService.isProfileFollowed(pubkey);
     if (kDebugMode) {
-      print('isProfileFollowedProvider($pubkey): Initial state = $initialState');
+      print('[${providerStopwatch.elapsedMilliseconds}ms] isProfileFollowedProvider(${pubkey.substring(0, 8)}...): Initial state = $initialState');
     }
     controller.add(initialState);
+    print('[${providerStopwatch.elapsedMilliseconds}ms] Initial state emitted');
     
     // Listen to the stream for updates
+    print('[${providerStopwatch.elapsedMilliseconds}ms] Creating stream subscription...');
     final subscription = profileService.followedProfilesStream.listen((followedSet) {
       final newState = followedSet.contains(pubkey);
       if (kDebugMode) {
-        print('isProfileFollowedProvider($pubkey): Stream update = $newState');
+        print('[StreamProvider] isProfileFollowedProvider(${pubkey.substring(0, 8)}...): Stream update received = $newState (set size: ${followedSet.length})');
       }
       controller.add(newState);
     });
+    print('[${providerStopwatch.elapsedMilliseconds}ms] Stream subscription created');
     
     // Clean up the subscription when the stream is closed
     controller.onCancel = () {
@@ -1249,6 +1288,23 @@ final publishFollowEventProvider = FutureProvider<RelayPublishResult>((ref) asyn
   final profileService = ref.watch(profileServiceProvider);
   final keyService = ref.watch(keyManagementServiceProvider);
   return await profileService.publishFollowEvent(keyService);
+});
+
+// Stream provider for the followed profiles set
+final followedProfilesStreamProvider = StreamProvider<Set<String>>((ref) {
+  final profileService = ref.watch(profileServiceProvider);
+  return profileService.followedProfilesStream;
+});
+
+// Simple provider that returns current follow state by watching the stream
+final isProfileFollowedSimpleProvider = Provider.family<bool, String>((ref, pubkey) {
+  final profileService = ref.watch(profileServiceProvider);
+  
+  // Watch the stream to rebuild when it changes
+  final followedSetAsync = ref.watch(followedProfilesStreamProvider);
+  final followedSet = followedSetAsync.valueOrNull ?? profileService.followedProfiles;
+  
+  return followedSet.contains(pubkey);
 });
 
 /// Service for managing a buffer of profiles
@@ -1320,9 +1376,6 @@ class ProfileBufferService {
     _notifyListeners();
     
     try {
-      if (kDebugMode) {
-        print('Loading initial $_initialLoadCount profiles...');
-      }
       
       // Fetch initial profiles
       final candidateProfiles = await _profileService.discoverProfiles(

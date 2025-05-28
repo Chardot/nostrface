@@ -83,10 +83,11 @@ class KeyManagementService {
         // For native platforms, use secure storage
         pubkey = await _secureStorage.read(key: _publicKeyKey);
       }
-      print('  Public key: ${pubkey != null ? "${pubkey.substring(0, 10)}..." : "NULL"}');
       return pubkey;
     } catch (e) {
-      print('ERROR getting public key: $e');
+      if (kDebugMode) {
+        print('[KeyManagement] Error getting public key: $e');
+      }
       return null;
     }
   }
@@ -242,21 +243,21 @@ class KeyManagementService {
   
   /// Get the Keychain object for signing
   Future<nostr.Keychain?> getKeychain() async {
-    print('KeyManagementService.getKeychain called');
     final String? privateKey = await getPrivateKey();
     if (privateKey == null) {
-      print('  No private key found');
+      if (kDebugMode) {
+        print('[KeyManagement] No private key found');
+      }
       return null;
     }
     
     try {
-      print('  Creating keychain from private key...');
       final keychain = nostr.Keychain(privateKey);
-      print('  Keychain created successfully');
-      print('  Public key: ${keychain.public.substring(0, 10)}...');
       return keychain;
     } catch (e) {
-      print('ERROR creating keychain: $e');
+      if (kDebugMode) {
+        print('[KeyManagement] Error creating keychain: $e');
+      }
       return null;
     }
   }

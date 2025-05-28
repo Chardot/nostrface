@@ -14,11 +14,51 @@ class NostrRelayService {
   final Map<String, Completer<List<NostrEvent>>> _subscriptions = {};
   final Map<String, Completer<bool>> _pendingPublishes = {};
   bool _isConnected = false;
+  
+  // Message aggregation for cleaner logs
+  final Map<String, int> _messageTypeCounts = {};
+  final Map<String, int> _eventIdCounts = {};
+  Timer? _logAggregationTimer;
+  int _totalMessagesReceived = 0;
 
   NostrRelayService(this.relayUrl);
 
   bool get isConnected => _isConnected;
   Stream<NostrEvent> get eventStream => _eventStreamController.stream;
+  
+  /// Start or reset the log aggregation timer
+  void _startLogAggregationTimer() {
+    _logAggregationTimer?.cancel();
+    _logAggregationTimer = Timer(const Duration(seconds: 1), _printAggregatedLogs);
+  }
+  
+  /// Print aggregated logs
+  void _printAggregatedLogs() {
+    if (!kDebugMode) return;
+    
+    if (_totalMessagesReceived > 0) {
+      final shortUrl = relayUrl.split('//').last;
+      print('[$shortUrl] $_totalMessagesReceived msgs');
+      
+      // Print message type summary
+      if (_messageTypeCounts.isNotEmpty) {
+        final typeSummary = _messageTypeCounts.entries
+            .map((e) => '${e.key}: ${e.value}')
+            .join(', ');
+        print('  Types: $typeSummary');
+      }
+      
+      // Print event counts summary
+      if (_eventIdCounts.isNotEmpty) {
+        print('  Events: ${_eventIdCounts.length} unique (${_eventIdCounts.values.reduce((a, b) => a + b)} total)');
+      }
+      
+      // Reset counters
+      _totalMessagesReceived = 0;
+      _eventIdCounts.clear();
+      _messageTypeCounts.clear();
+    }
+  }
 
   /// Connect to the relay
   Future<bool> connect() async {
@@ -30,9 +70,6 @@ class NostrRelayService {
     }
     
     try {
-      if (kDebugMode) {
-        print('Connecting to relay: $relayUrl');
-      }
       
       // For web platforms, use a different strategy due to CORS restrictions
       if (kIsWeb) {
@@ -58,9 +95,6 @@ class NostrRelayService {
       
       _channel = WebSocketChannel.connect(Uri.parse(relayUrl));
       
-      if (kDebugMode) {
-        print('WebSocket channel created for: $relayUrl');
-      }
 
       return _setupNativeWebSocketListener();
     } catch (e) {
@@ -74,17 +108,11 @@ class NostrRelayService {
 
   /// Connect using a web-compatible approach
   Future<bool> _connectWeb() async {
-    if (kDebugMode) {
-      print('Using web-compatible connection strategy for: $relayUrl');
-    }
     
     try {
       // Try to connect to the actual relay through WebSocket
       _channel = WebSocketChannel.connect(Uri.parse(relayUrl));
       
-      if (kDebugMode) {
-        print('WebSocket channel created for web: $relayUrl');
-      }
       
       return _setupNativeWebSocketListener();
     } catch (e) {
@@ -103,9 +131,6 @@ class NostrRelayService {
   Future<bool> _setupNativeWebSocketListener() async {
     if (_channel == null) return false;
     
-    if (kDebugMode) {
-      print('Setting up native WebSocket listener for: $relayUrl');
-    }
     
     try {
       _channel!.stream.listen(
@@ -113,14 +138,9 @@ class NostrRelayService {
           // If we get a message, we're definitely connected
           if (!_isConnected) {
             _isConnected = true;
-            if (kDebugMode) {
-              print('Successfully connected to relay: $relayUrl');
-            }
           }
           
-          if (kDebugMode) {
-            print('Received message from $relayUrl (${message.toString().length} bytes)');
-          }
+          // Don't log individual messages - handled by aggregation
           
           try {
             _handleMessage(message.toString());
@@ -145,9 +165,6 @@ class NostrRelayService {
         cancelOnError: false, // Don't cancel on errors, keep trying
       );
       
-      if (kDebugMode) {
-        print('WebSocket listener set up successfully for: $relayUrl');
-      }
       
       // Give the connection a moment to establish
       await Future.delayed(const Duration(milliseconds: 1000));
@@ -170,6 +187,10 @@ class NostrRelayService {
   /// Close the connection to the relay
   void disconnect() {
     try {
+      // Print any remaining aggregated logs before disconnecting
+      _printAggregatedLogs();
+      _logAggregationTimer?.cancel();
+      
       if (kDebugMode) {
         print('Disconnecting from relay: $relayUrl');
       }
@@ -215,17 +236,11 @@ class NostrRelayService {
         final message = jsonEncode(testSubscription);
         _channel!.sink.add(message);
         
-        if (kDebugMode) {
-          print('Sent connection test to $relayUrl');
-        }
         
         // Set up a timeout to mark connection as successful if no immediate error
         Timer(const Duration(seconds: 2), () {
           if (_channel?.sink != null && !_isConnected) {
             _isConnected = true;
-            if (kDebugMode) {
-              print('Connection test successful for $relayUrl');
-            }
           }
         });
         
@@ -241,10 +256,9 @@ class NostrRelayService {
   /// Handle messages received from the relay
   void _handleMessage(String message) {
     try {
-      // Don't log the full message to avoid UTF-8 issues in console
-      if (kDebugMode) {
-        print('Received message from $relayUrl (${message.length} bytes)');
-      }
+      // Aggregate message counts instead of logging each one
+      _totalMessagesReceived++;
+      _startLogAggregationTimer();
       
       // Safely parse JSON with try-catch
       List<dynamic> parsed;
@@ -260,6 +274,7 @@ class NostrRelayService {
       if (parsed.isEmpty) return;
       
       final String messageType = parsed[0];
+      _messageTypeCounts[messageType] = (_messageTypeCounts[messageType] ?? 0) + 1;
       
       switch (messageType) {
         case 'EVENT':
@@ -301,9 +316,8 @@ class NostrRelayService {
               
               final event = NostrEvent.fromJson(eventData);
               
-              if (kDebugMode) {
-                print('Received event with id: ${event.id.substring(0, 10)}... from $relayUrl');
-              }
+              // Aggregate event counts instead of logging each one
+              _eventIdCounts[event.id] = (_eventIdCounts[event.id] ?? 0) + 1;
               
               // Add the event to the stream so listeners can handle it
               _eventStreamController.add(event);
@@ -320,9 +334,6 @@ class NostrRelayService {
           // End of stored events for a subscription
           if (parsed.length >= 2) {
             final String subscriptionId = parsed[1];
-            if (kDebugMode) {
-              print('Received EOSE for subscription $subscriptionId');
-            }
             
             // We don't complete the completer here anymore.
             // The timeout will handle completion with the collected events.
@@ -337,18 +348,14 @@ class NostrRelayService {
             final bool success = parsed[2] as bool;
             final String message = parsed.length > 3 ? parsed[3] : '';
             
-            // Always log OK responses for follow events
-            if (kDebugMode || !success || eventId.contains('contact')) {
-              print('\n=== OK RESPONSE FROM $relayUrl ===');
-              print('Event ID: $eventId');
-              print('Accepted: $success');
-              if (message.isNotEmpty) {
-                print('Message: $message');
+            // Log OK responses more concisely
+            if (kDebugMode && (!success || !message.contains('duplicate'))) {
+              final shortUrl = relayUrl.split('//').last;
+              if (success) {
+                print('[OK] Event ${eventId.substring(0, 10)}... accepted by $shortUrl');
+              } else {
+                print('[REJECTED] Event ${eventId.substring(0, 10)}... by $shortUrl: $message');
               }
-              if (!success) {
-                print('REJECTION REASON: ${message.isEmpty ? "No reason provided" : message}');
-              }
-              print('================================\n');
             }
             
             // Complete the pending publish future
@@ -403,9 +410,7 @@ class NostrRelayService {
       // Check if this event matches our filter
       if (_eventMatchesFilter(event, filter)) {
         collectedEvents.add(event);
-        if (kDebugMode) {
-          print('Got matching event from $relayUrl: ${event.id.substring(0, 10)}...');
-        }
+        // Don't log each matching event - it's too noisy
       }
     });
     
@@ -415,9 +420,8 @@ class NostrRelayService {
     // Send the subscription request to the relay
     _channel?.sink.add(jsonEncode(request));
     
-    if (kDebugMode) {
-      print('Sent subscription to $relayUrl: ${jsonEncode(filter)}');
-    }
+    // Aggregate subscription logs
+    _messageTypeCounts['REQ'] = (_messageTypeCounts['REQ'] ?? 0) + 1;
     
     // If a timeout is specified, close the subscription after the timeout
     if (timeout != null) {
@@ -507,9 +511,7 @@ class NostrRelayService {
       // Send the publish request to the relay
       _channel!.sink.add(jsonEncode(request));
       
-      if (kDebugMode) {
-        print('Publishing event to $relayUrl: ${event.id}');
-      }
+      // Don't log individual publishes - too noisy
       
       // Wait for OK response with timeout
       final result = await completer.future.timeout(

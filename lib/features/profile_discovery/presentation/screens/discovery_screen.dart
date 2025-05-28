@@ -1,6 +1,7 @@
 import 'package:card_swiper/card_swiper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nostrface/core/models/nostr_profile.dart';
@@ -24,11 +25,20 @@ class DiscoveryScreen extends ConsumerStatefulWidget {
 class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   late SwiperController _swiperController;
   bool _isLoading = false;
+  
 
   @override
   void initState() {
     super.initState();
     _swiperController = SwiperController();
+    
+    // Pre-load authentication status to avoid delays on first follow
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(isLoggedInProvider);
+        print('[Discovery] Pre-loading authentication status');
+      }
+    });
     
     // Load profiles after widget is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -318,9 +328,9 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                         );
                       },
                     ),
-                    Consumer(
-                      builder: (context, ref, child) {
-                        final currentIndex = ref.watch(currentProfileIndexProvider);
+                    Builder(
+                      builder: (context) {
+                        final currentIndex = ref.read(currentProfileIndexProvider);
                         if (currentIndex < 0 || currentIndex >= profiles.length) {
                           return _buildActionButton(
                             icon: Icons.favorite,
@@ -330,26 +340,25 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                         }
                         
                         final profile = profiles[currentIndex];
-                        final isFollowedAsync = ref.watch(isProfileFollowedProvider(profile.pubkey));
                         
-                        return isFollowedAsync.when(
-                          data: (isFollowed) => _buildActionButton(
-                            icon: isFollowed ? Icons.check : Icons.favorite_border,
-                            color: isFollowed ? Colors.green : Colors.white,
-                            iconColor: isFollowed ? Colors.white : Colors.green,
-                          onPressed: () async {
-                            print('\n=== FOLLOW BUTTON PRESSED ===');
+                        // Get initial state only once
+                        final initialFollowed = ref.read(isProfileFollowedSimpleProvider(profile.pubkey));
+                        
+                        return _buildActionButton(
+                          icon: Icons.favorite_border,
+                          color: Colors.white,
+                          iconColor: Colors.green,
+                          onPressed: () {
+                            final buttonPressTime = DateTime.now();
+                            print('\n=== FOLLOW BUTTON PRESSED (SWIPE RIGHT) ===');
+                            print('Absolute time: ${buttonPressTime.hour.toString().padLeft(2, '0')}:${buttonPressTime.minute.toString().padLeft(2, '0')}:${buttonPressTime.second.toString().padLeft(2, '0')}.${buttonPressTime.millisecond.toString().padLeft(3, '0')}');
                             print('Profile: ${profile.displayNameOrName} (${profile.pubkey})');
-                            print('Currently followed: $isFollowed');
                             
-                            // Check if user is logged in
-                            print('Checking authentication status...');
-                            final isLoggedIn = await ref.read(isLoggedInProvider.future);
-                            print('Is logged in: $isLoggedIn');
+                            // Check if user is logged in first
+                            final isLoggedInAsync = ref.read(isLoggedInProvider);
+                            final isLoggedIn = isLoggedInAsync.valueOrNull ?? false;
                             
                             if (!isLoggedIn && context.mounted) {
-                              print('User not logged in, showing login dialog');
-                              // Show dialog to prompt user to log in
                               showDialog(
                                 context: context,
                                 builder: (BuildContext dialogContext) => AlertDialog(
@@ -368,7 +377,6 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                                       key: const Key('discovery_login_confirm'),
                                       onPressed: () {
                                         Navigator.of(dialogContext).pop();
-                                        // Use push to preserve the stack (we want to return to discovery after login)
                                         context.push('/login');
                                       },
                                       child: const Text('Log In'),
@@ -379,53 +387,37 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                               return;
                             }
                             
-                            // If logged in, toggle follow status
-                            print('User is logged in, attempting to toggle follow status');
+                            // Store the profile info for the follow action
+                            final profileToFollow = profile;
+                            final wasFollowed = initialFollowed;
                             
-                            // Optimistically update the UI immediately
-                            final profileService = ref.read(profileServiceProvider);
-                            if (isFollowed) {
-                              print('Calling optimisticallyUnfollow for ${profile.pubkey}');
-                              profileService.optimisticallyUnfollow(profile.pubkey);
-                            } else {
-                              print('Calling optimisticallyFollow for ${profile.pubkey}');
-                              profileService.optimisticallyFollow(profile.pubkey);
-                            }
-                            
-                            print('After optimistic update - should trigger stream emission');
-                            // The StreamProvider will automatically update when the stream emits new values
+                            // Just trigger the swipe animation
+                            print('Triggering swipe right animation...');
+                            _swiperController.next();
+                            print('=== SWIPE TRIGGERED ===');
                             
                             // Show immediate feedback
                             if (context.mounted) {
-                              final message = isFollowed 
-                                ? 'Unfollowing ${profile.displayNameOrName}...' 
-                                : 'Following ${profile.displayNameOrName}...';
-                              
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text(message),
+                                  content: Text('Following ${profileToFollow.displayNameOrName}...'),
                                   duration: const Duration(seconds: 1),
                                 ),
                               );
                             }
                             
-                            // Publish to relays in the background
-                            print('Publishing follow event in background...');
-                            ref.read(publishFollowEventProvider.future).then((result) {
-                              print('Follow operation completed:');
-                              print('  Event ID: ${result.eventId}');
-                              print('  Success: ${result.isSuccess}');
-                              print('  Success rate: ${(result.successRate * 100).toStringAsFixed(1)}%');
+                            // Wait for the card to be swiped away then execute follow
+                            Future.delayed(const Duration(milliseconds: 300), () {
+                              print('\n=== EXECUTING FOLLOW ACTION (CARD OUT OF VIEW) ===');
                               
-                              if (!result.isSuccess) {
-                                // Revert the optimistic update if failed
-                                if (isFollowed) {
-                                  profileService.optimisticallyFollow(profile.pubkey);
-                                } else {
-                                  profileService.optimisticallyUnfollow(profile.pubkey);
-                                }
-                                
-                                if (context.mounted) {
+                              final profileService = ref.read(profileServiceProvider);
+                              if (!wasFollowed) {
+                                profileService.optimisticallyFollow(profileToFollow.pubkey);
+                              }
+                              
+                              // Publish to relays
+                              ref.read(publishFollowEventProvider.future).then((result) {
+                                if (!result.isSuccess && context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       content: Text(
@@ -436,24 +428,11 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                                     ),
                                   );
                                 }
-                              }
+                              }).catchError((e) {
+                                print('Error publishing follow event: $e');
+                              });
                             });
-                            
-                            print('=== FOLLOW BUTTON HANDLER COMPLETE ===\n');
-                            // Remove automatic swiping - let user decide when to move on
                           },
-                          ),
-                          loading: () => _buildActionButton(
-                            icon: Icons.favorite_border,
-                            color: Colors.grey,
-                            onPressed: null,
-                          ),
-                          error: (_, __) => _buildActionButton(
-                            icon: Icons.favorite_border,
-                            color: Colors.white,
-                            iconColor: Colors.green,
-                            onPressed: null,
-                          ),
                         );
                       },
                     ),
