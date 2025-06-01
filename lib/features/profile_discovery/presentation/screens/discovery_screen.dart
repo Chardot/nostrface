@@ -10,6 +10,7 @@ import 'package:nostrface/core/services/profile_service.dart';
 import 'package:nostrface/core/services/discarded_profiles_service.dart';
 import 'package:nostrface/core/providers/app_providers.dart';
 import 'package:nostrface/features/profile_discovery/presentation/widgets/profile_card.dart';
+import 'package:nostrface/features/direct_messages/presentation/widgets/dm_composer.dart';
 
 // Provider to track the current profile index in the swiper
 // Using autoDispose: false to ensure it persists across widget rebuilds
@@ -210,6 +211,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                     layout: SwiperLayout.STACK,
                     itemWidth: MediaQuery.of(context).size.width * 0.85,
                     itemHeight: MediaQuery.of(context).size.height * 0.7,
+                    autoplay: false,
                     onIndexChanged: (index) {
                       // Update the current profile index in the provider
                       ref.read(currentProfileIndexProvider.notifier).state = index;
@@ -223,16 +225,6 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                     },
                   ),
                 ),
-              ),
-              // Show loading indicator when fetching more profiles
-              Consumer(
-                builder: (context, ref, child) {
-                  final bufferService = ref.watch(profileBufferServiceProvider);
-                  if (bufferService.isFetching && !bufferService.isLoadingInitial) {
-                    return const LinearProgressIndicator();
-                  }
-                  return const SizedBox.shrink();
-                },
               ),
               Padding(
                 padding: const EdgeInsets.all(24.0),
@@ -317,12 +309,32 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                               return;
                             }
                             
-                            // Navigate to profile screen with DM intent
+                            // Show DM composer bottom sheet
                             final profile = profiles[currentIndex];
                             if (context.mounted) {
-                              // For now, navigate to profile screen
-                              // TODO: When DM screen is implemented, navigate directly to DM
-                              context.go('/discovery/profile/${profile.pubkey}');
+                              showModalBottomSheet(
+                                context: context,
+                                isScrollControlled: true,
+                                backgroundColor: Theme.of(context).cardColor,
+                                shape: const RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.vertical(
+                                    top: Radius.circular(20),
+                                  ),
+                                ),
+                                builder: (BuildContext sheetContext) {
+                                  return Padding(
+                                    padding: EdgeInsets.only(
+                                      bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+                                    ),
+                                    child: DirectMessageComposer(
+                                      recipient: profile,
+                                      onMessageSent: () {
+                                        Navigator.of(sheetContext).pop();
+                                      },
+                                    ),
+                                  );
+                                },
+                              );
                             }
                           } : null,
                         );
@@ -413,6 +425,10 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                               final profileService = ref.read(profileServiceProvider);
                               if (!wasFollowed) {
                                 profileService.optimisticallyFollow(profileToFollow.pubkey);
+                                
+                                // Remove the followed profile from the buffer
+                                final bufferService = ref.read(profileBufferServiceProvider);
+                                bufferService.removeProfile(profileToFollow.pubkey);
                               }
                               
                               // Publish to relays
@@ -485,6 +501,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                       layout: SwiperLayout.STACK,
                       itemWidth: MediaQuery.of(context).size.width * 0.85,
                       itemHeight: MediaQuery.of(context).size.height * 0.7,
+                      autoplay: false,
                       onIndexChanged: (index) {
                         ref.read(currentProfileIndexProvider.notifier).state = index;
                         final bufferService = ref.read(profileBufferServiceProvider);
@@ -493,9 +510,6 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                     ),
                   ),
                 ),
-                // Show loading indicator in app bar area
-                if (bufferService.isFetching)
-                  const LinearProgressIndicator(),
               ],
             );
           }

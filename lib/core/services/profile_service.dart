@@ -342,11 +342,14 @@ class ProfileService {
                   
                   // Only consider profiles with valid pictures, name/display name, and bio
                   if (_isValidProfilePicture(profile.picture) && _hasRequiredProfileInfo(profile)) {
-                    // Check if profile is discarded
-                    if (discardedService == null || !discardedService.isDiscarded(profile.pubkey)) {
-                      // Check if image has failed before
-                      if (failedImagesService == null || !failedImagesService.hasImageFailed(profile.picture!)) {
-                        candidateProfiles.add(profile);
+                    // Check if profile is followed
+                    if (!_followedProfiles.contains(profile.pubkey)) {
+                      // Check if profile is discarded
+                      if (discardedService == null || !discardedService.isDiscarded(profile.pubkey)) {
+                        // Check if image has failed before
+                        if (failedImagesService == null || !failedImagesService.hasImageFailed(profile.picture!)) {
+                          candidateProfiles.add(profile);
+                        }
                       }
                     }
                   }
@@ -486,26 +489,29 @@ class ProfileService {
             final hasRequiredInfo = _hasRequiredProfileInfo(profile);
             
             if (validPicture && hasRequiredInfo) {
-              // Check if profile is discarded
-              if (discardedService == null || !discardedService.isDiscarded(profile.pubkey)) {
-                // Check if image has failed before
-                if (failedImagesService == null || !failedImagesService.hasImageFailed(profile.picture!)) {
-                  candidateProfiles.add(profile);
-                  seenPubkeys.add(profile.pubkey);
-                  
-                  // Cache the profile
-                  _profiles[profile.pubkey] = profile;
-                  
-                  // Save to storage asynchronously
-                  _saveProfileToStorage(profile).catchError((e) {
-                    if (kDebugMode) {
-                      print('Error saving profile to storage: $e');
+              // Check if profile is followed
+              if (!_followedProfiles.contains(profile.pubkey)) {
+                // Check if profile is discarded
+                if (discardedService == null || !discardedService.isDiscarded(profile.pubkey)) {
+                  // Check if image has failed before
+                  if (failedImagesService == null || !failedImagesService.hasImageFailed(profile.picture!)) {
+                    candidateProfiles.add(profile);
+                    seenPubkeys.add(profile.pubkey);
+                    
+                    // Cache the profile
+                    _profiles[profile.pubkey] = profile;
+                    
+                      // Save to storage asynchronously
+                    _saveProfileToStorage(profile).catchError((e) {
+                      if (kDebugMode) {
+                        print('Error saving profile to storage: $e');
+                      }
+                    });
+                    
+                    // We need to get enough candidates for filtering
+                    if (candidateProfiles.length >= initialLimit) {
+                      break;
                     }
-                  });
-                  
-                  // We need to get enough candidates for filtering
-                  if (candidateProfiles.length >= initialLimit) {
-                    break;
                   }
                 }
               }
@@ -1428,10 +1434,11 @@ class ProfileBufferService {
         failedImagesService: _failedImagesService,
       );
       
-      // Filter out profiles that are already in buffers
+      // Filter out profiles that are already in buffers or are followed
       final existingPubkeys = {..._profileBuffer.map((p) => p.pubkey), ..._stagingBuffer.map((p) => p.pubkey)};
       final uniqueNewProfiles = newProfiles
           .where((profile) => !existingPubkeys.contains(profile.pubkey))
+          .where((profile) => !_profileService.isProfileFollowed(profile.pubkey))
           .toList();
         
       if (uniqueNewProfiles.isNotEmpty) {
@@ -1487,9 +1494,12 @@ class ProfileBufferService {
         final batch = _stagingBuffer.take(batchSize).toList();
         _stagingBuffer.removeRange(0, batch.length.clamp(0, _stagingBuffer.length));
         
+        // Filter out any followed profiles that might have slipped through
+        final filteredBatch = batch.where((profile) => !_profileService.isProfileFollowed(profile.pubkey)).toList();
+        
         // Check each profile in parallel
         final results = await Future.wait(
-          batch.map((profile) async {
+          filteredBatch.map((profile) async {
             // First, get user's post count
             int postCount = 0;
             try {
