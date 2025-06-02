@@ -1,25 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:nostrface/core/models/nostr_event.dart';
+import 'package:nostrface/core/models/nostr_profile.dart';
 import 'package:nostrface/core/utils/nostr_utils.dart';
 
-class ShareNoteSheet extends StatelessWidget {
-  final NostrEvent note;
-  final String authorName;
+class ShareProfileSheet extends StatelessWidget {
+  final NostrProfile profile;
   
-  const ShareNoteSheet({
+  const ShareProfileSheet({
     Key? key,
-    required this.note,
-    required this.authorName,
+    required this.profile,
   }) : super(key: key);
   
   @override
   Widget build(BuildContext context) {
-    // Generate the note ID in bech32 format (note1...)
-    final noteId = _encodeNoteId(note.id);
+    // Generate the npub from the hex pubkey
+    final npub = NostrUtils.hexToNpub(profile.pubkey);
     // Create a shareable link (you might want to customize this URL)
-    final noteLink = 'https://njump.me/$noteId';
+    final profileLink = 'https://njump.me/$npub';
     
     return Container(
       padding: const EdgeInsets.only(top: 12),
@@ -40,7 +38,7 @@ class ShareNoteSheet extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              'Share Note',
+              'Share Profile',
               style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
@@ -48,29 +46,29 @@ class ShareNoteSheet extends StatelessWidget {
           // Share options
           ListTile(
             leading: const Icon(Icons.link),
-            title: const Text('Copy Link to Note'),
-            subtitle: Text(noteLink, style: Theme.of(context).textTheme.bodySmall),
+            title: const Text('Copy Link to Profile'),
+            subtitle: Text(profileLink, style: Theme.of(context).textTheme.bodySmall),
             onTap: () {
-              Clipboard.setData(ClipboardData(text: noteLink));
+              Clipboard.setData(ClipboardData(text: profileLink));
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Link copied to clipboard'),
+                  content: Text('Profile link copied to clipboard'),
                   duration: Duration(seconds: 2),
                 ),
               );
             },
           ),
           ListTile(
-            leading: const Icon(Icons.tag),
-            title: const Text('Copy Note ID'),
-            subtitle: Text(noteId, style: Theme.of(context).textTheme.bodySmall),
+            leading: const Icon(Icons.person),
+            title: const Text('Copy Profile ID (Npub)'),
+            subtitle: Text(npub, style: Theme.of(context).textTheme.bodySmall),
             onTap: () {
-              Clipboard.setData(ClipboardData(text: noteId));
+              Clipboard.setData(ClipboardData(text: npub));
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Note ID copied to clipboard'),
+                  content: Text('Profile ID copied to clipboard'),
                   duration: Duration(seconds: 2),
                 ),
               );
@@ -83,10 +81,10 @@ class ShareNoteSheet extends StatelessWidget {
             onTap: () {
               Navigator.pop(context);
               // Share via system share sheet
-              final shareText = '"${_truncateContent(note.content)}" - $authorName\n\n$noteLink';
+              final shareText = '${profile.displayNameOrName} on Nostr\n\n${profile.about ?? "Check out this profile"}\n\n$profileLink';
               Share.share(
                 shareText,
-                subject: 'Note from $authorName on Nostr',
+                subject: '${profile.displayNameOrName} on Nostr',
               );
             },
           ),
@@ -109,22 +107,7 @@ class ShareNoteSheet extends StatelessWidget {
     );
   }
   
-  String _encodeNoteId(String hexId) {
-    try {
-      // Encode as note1... format using NostrUtils
-      return NostrUtils.hexToNoteId(hexId);
-    } catch (e) {
-      return hexId;
-    }
-  }
-  
-  String _truncateContent(String content) {
-    const maxLength = 100;
-    if (content.length <= maxLength) return content;
-    return '${content.substring(0, maxLength)}...';
-  }
-  
-  static void show(BuildContext context, NostrEvent note, String authorName) {
+  static void show(BuildContext context, NostrProfile profile) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).cardColor,
@@ -134,9 +117,8 @@ class ShareNoteSheet extends StatelessWidget {
       isScrollControlled: true,
       useRootNavigator: true, // This makes it appear above everything including the tab bar
       builder: (BuildContext context) {
-        return ShareNoteSheet(
-          note: note,
-          authorName: authorName,
+        return ShareProfileSheet(
+          profile: profile,
         );
       },
     );
