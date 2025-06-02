@@ -33,7 +33,6 @@ A Tinder-like profile discovery app for the Nostr protocol, built with Flutter. 
 - **Share Notes**: Share posts via system share sheet or copy links
 
 ### ⚙️ Settings & Management
-- **Relay Management**: Configure and manage Nostr relay connections
 - **Discarded Profiles**: Track and restore profiles you've passed on
 - **Dark Mode**: Toggle between light and dark themes
 - **Profile Management**: View your public key and manage authentication
@@ -176,4 +175,4 @@ For questions or support, please open an issue on GitHub.
 
 ---
 
-**Note**: This app requires connection to Nostr relays. The default relay is `wss://relay.nos.social`, but you can configure additional relays in the settings.
+**Note**: This app connects to the Nostr network via the `wss://relay.nos.social` relay.
