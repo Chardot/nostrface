@@ -138,4 +138,13 @@ class NostrUtils {
       return 'npub${hexPubkey.substring(0, 8)}...';
     }
   }
+  
+  /// Convert hex note ID to note1... format
+  static String hexToNoteId(String hexNoteId) {
+    try {
+      return nostr.Nip19.encodeNote(hexNoteId);
+    } catch (e) {
+      return 'note1${hexNoteId.substring(0, 8)}...';
+    }
+  }
 }

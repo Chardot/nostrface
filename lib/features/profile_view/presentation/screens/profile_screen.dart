@@ -9,6 +9,7 @@ import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/core/services/profile_service.dart';
 import 'package:nostrface/features/direct_messages/presentation/widgets/dm_composer.dart';
 import 'package:nostrface/core/widgets/formatted_content.dart';
+import 'package:nostrface/features/profile_view/presentation/widgets/share_note_sheet.dart';
 
 // Provider for fetching recent notes from a user with auto-refresh
 final userNotesProvider = FutureProvider.family.autoDispose<List<NostrEvent>, String>((ref, pubkey) async {
@@ -319,8 +320,10 @@ class ProfileScreen extends ConsumerWidget {
                                     IconButton(
                                       icon: const Icon(Icons.share),
                                       onPressed: () {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('Share feature coming soon!')),
+                                        ShareNoteSheet.show(
+                                          context,
+                                          note,
+                                          profile.displayNameOrName,
                                         );
                                       },
                                     ),

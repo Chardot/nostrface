@@ -42,6 +42,8 @@ dependencies:
   card_swiper: ^3.0.1
   # Reactive forms
   reactive_forms: ^16.0.2
+  # Share functionality
+  share_plus: ^7.2.1
 
 dev_dependencies:
   flutter_test:
