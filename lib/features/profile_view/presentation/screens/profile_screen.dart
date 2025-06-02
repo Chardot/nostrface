@@ -8,6 +8,7 @@ import 'package:nostrface/core/models/nostr_profile.dart';
 import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/core/services/profile_service.dart';
 import 'package:nostrface/features/direct_messages/presentation/widgets/dm_composer.dart';
+import 'package:nostrface/core/widgets/formatted_content.dart';
 
 // Provider for fetching recent notes from a user with auto-refresh
 final userNotesProvider = FutureProvider.family.autoDispose<List<NostrEvent>, String>((ref, pubkey) async {
@@ -291,9 +292,9 @@ class ProfileScreen extends ConsumerWidget {
                                   ],
                                 ),
                                 const SizedBox(height: 12),
-                                Text(
-                                  _formatContent(note.content),
-                                  style: Theme.of(context).textTheme.bodyMedium,
+                                FormattedContent(
+                                  content: note.content,
+                                  textStyle: Theme.of(context).textTheme.bodyMedium,
                                 ),
                                 const SizedBox(height: 12),
                                 Row(
@@ -436,19 +437,6 @@ class ProfileScreen extends ConsumerWidget {
     }
   }
   
-  String _formatContent(String content) {
-    // Remove excessive whitespace
-    String formatted = content.trim().replaceAll(RegExp(r'\n\s*\n\s*\n'), '\n\n');
-    
-    // Convert URLs to clickable format (in a real app, you would add link rendering)
-    // This is a simple regex for URLs - a real implementation would be more robust
-    formatted = formatted.replaceAllMapped(
-      RegExp(r'https?:\/\/[^\s]+'),
-      (match) => '[${match.group(0)}]',
-    );
-    
-    return formatted;
-  }
 
   void _showMessageBottomSheet(BuildContext context, NostrProfile profile) {
     showModalBottomSheet(
