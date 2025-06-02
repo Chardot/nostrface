@@ -34,6 +34,8 @@ dependencies:
   crypto: ^3.0.3
   # Nostr protocol implementation
   nostr: ^1.4.3
+  # Bech32 encoding/decoding for nprofile support
+  bech32: ^0.2.2
   # Image loading and caching
   cached_network_image: ^3.2.3
   # Card swiping

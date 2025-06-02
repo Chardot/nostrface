@@ -210,8 +210,24 @@ class _MentionWidget extends ConsumerWidget {
     final fullBech32 = mentionId; // mentionId is already the full bech32 string
     final decodedPubkey = NostrUtils.decodeBech32PublicKey(fullBech32);
     
-    // If we couldn't decode, try using the mentionId directly as it might be hex
-    final pubkey = decodedPubkey ?? mentionId;
+    // Debug logging
+    if (decodedPubkey == null) {
+      print('Failed to decode $mentionType: $fullBech32');
+    } else {
+      print('Successfully decoded $mentionType to pubkey: $decodedPubkey');
+    }
+    
+    // If we couldn't decode, we can't look up the profile
+    if (decodedPubkey == null) {
+      return Text(
+        '@${mentionType}',
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.primary,
+        ),
+      );
+    }
+    
+    final pubkey = decodedPubkey;
     
     // Try to get the profile from cache first
     final profileAsync = ref.watch(profileProvider(pubkey));
@@ -237,26 +253,36 @@ class _MentionWidget extends ConsumerWidget {
               ),
             );
           }
-          // Fallback to showing the npub
+          // Fallback to showing shortened bech32 if we couldn't get profile
+          final displayText = mentionType == 'npub' 
+              ? '@${mentionId.substring(0, 12)}...'
+              : '@${mentionType}...';
           return Text(
-            '@${pubkey.substring(0, 8)}...',
+            displayText,
             style: TextStyle(
               color: Theme.of(context).colorScheme.primary,
             ),
           );
         },
         loading: () => Text(
-          '@...',
+          '@loading...',
           style: TextStyle(
             color: Theme.of(context).colorScheme.primary,
+            fontStyle: FontStyle.italic,
           ),
         ),
-        error: (_, __) => Text(
-          '@${pubkey.substring(0, 8)}...',
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.primary,
-          ),
-        ),
+        error: (_, __) {
+          // On error, show the mention type
+          final displayText = mentionType == 'npub' 
+              ? '@${mentionId.substring(0, 12)}...'
+              : '@${mentionType}...';
+          return Text(
+            displayText,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          );
+        },
       ),
     );
   }
