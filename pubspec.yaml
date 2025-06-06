@@ -39,7 +39,7 @@ dependencies:
   # Image loading and caching
   cached_network_image: ^3.2.3
   # Card swiping
-  card_swiper: ^3.0.1
+  flutter_card_swiper: ^7.0.0
   # Reactive forms
   reactive_forms: ^16.0.2
   # Share functionality

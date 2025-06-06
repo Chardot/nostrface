@@ -7,11 +7,23 @@ import 'package:nostrface/core/providers/app_providers.dart';
 import 'package:nostrface/core/services/discarded_profiles_service.dart';
 import 'package:nostrface/core/services/note_cache_service.dart';
 
+// Global variable to track app start time
+late final DateTime appStartTime;
+
 void main() async {
+  // Record app start time
+  appStartTime = DateTime.now();
+  print('[PERF] App launch started at: ${appStartTime.toIso8601String()}');
+  
   WidgetsFlutterBinding.ensureInitialized();
+  final bindingTime = DateTime.now();
+  print('[PERF] Flutter binding initialized: ${bindingTime.difference(appStartTime).inMilliseconds}ms from start');
   
   // Initialize Hive for local storage
+  final hiveStartTime = DateTime.now();
   await Hive.initFlutter();
+  final hiveEndTime = DateTime.now();
+  print('[PERF] Hive initialization took: ${hiveEndTime.difference(hiveStartTime).inMilliseconds}ms (${hiveEndTime.difference(appStartTime).inMilliseconds}ms from start)');
   
   // Register Hive adapters here
   
@@ -35,6 +47,9 @@ void main() async {
       child: const NostrFaceApp(),
     ),
   );
+  
+  final runAppTime = DateTime.now();
+  print('[PERF] runApp called: ${runAppTime.difference(appStartTime).inMilliseconds}ms from start');
 }
 
 class NostrFaceApp extends ConsumerWidget {

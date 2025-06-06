@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/features/auth/presentation/screens/login_screen.dart';
-import 'package:nostrface/features/profile_discovery/presentation/screens/discovery_screen.dart';
+import 'package:nostrface/features/profile_discovery/presentation/screens/discovery_screen_new.dart';
 import 'package:nostrface/features/profile_view/presentation/screens/profile_screen.dart';
 import 'package:nostrface/features/settings/presentation/screens/settings_screen.dart';
 import 'package:nostrface/features/settings/presentation/screens/discarded_profiles_screen.dart';
@@ -45,7 +45,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/discovery',
             name: 'discovery',
-            builder: (context, state) => const DiscoveryScreen(),
+            builder: (context, state) => const DiscoveryScreenNew(),
             routes: [
               // Profile View (as a sub-route of discovery)
               GoRoute(

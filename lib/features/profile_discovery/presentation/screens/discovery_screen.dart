@@ -11,6 +11,7 @@ import 'package:nostrface/core/services/discarded_profiles_service.dart';
 import 'package:nostrface/core/providers/app_providers.dart';
 import 'package:nostrface/features/profile_discovery/presentation/widgets/profile_card.dart';
 import 'package:nostrface/features/direct_messages/presentation/widgets/dm_composer.dart';
+import 'package:nostrface/main.dart'; // For appStartTime
 
 // Provider to track the current profile index in the swiper
 // Using autoDispose: false to ensure it persists across widget rebuilds
@@ -26,12 +27,16 @@ class DiscoveryScreen extends ConsumerStatefulWidget {
 class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   late SwiperController _swiperController;
   bool _isLoading = false;
+  bool _hasLoggedFirstDisplay = false;
   
 
   @override
   void initState() {
     super.initState();
     _swiperController = SwiperController();
+    
+    final initTime = DateTime.now();
+    print('[PERF] DiscoveryScreen initState: ${initTime.difference(appStartTime).inMilliseconds}ms from start');
     
     // Pre-load authentication status to avoid delays on first follow
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -171,6 +176,14 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                 textAlign: TextAlign.center,
               ),
             );
+          }
+          
+          // Log first profile display
+          if (!_hasLoggedFirstDisplay && profiles.isNotEmpty) {
+            _hasLoggedFirstDisplay = true;
+            final firstDisplayTime = DateTime.now();
+            print('[PERF] First profiles displayed: ${firstDisplayTime.difference(appStartTime).inMilliseconds}ms from start');
+            print('[PERF] Profile count: ${profiles.length}');
           }
           
           return Column(

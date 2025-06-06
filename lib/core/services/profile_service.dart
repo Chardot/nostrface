@@ -37,9 +37,14 @@ class ProfileService {
   
   
   ProfileService(this._relayUrls) {
+    final serviceStartTime = DateTime.now();
+    print('[PERF] ProfileService: Initializing');
+    
     _initializeRelays();
     _loadFollowedProfiles();
     _preOpenFollowedBox(); // Pre-open the box to avoid delays
+    
+    print('[PERF] ProfileService: Initialized in ${DateTime.now().difference(serviceStartTime).inMilliseconds}ms');
   }
   
   /// Pre-open the followed profiles box to avoid delays on first follow
@@ -126,7 +131,12 @@ class ProfileService {
   
   /// Initialize connections to relays
   Future<void> _initializeRelays() async {
+    final relayStartTime = DateTime.now();
+    print('[PERF] ProfileService: Connecting to ${_relayUrls.length} relays');
+    
     await _initializeRelaysFromUrls(_relayUrls);
+    
+    print('[PERF] ProfileService: Relay connections completed in ${DateTime.now().difference(relayStartTime).inMilliseconds}ms');
   }
   
   /// Handle a profile metadata event (Kind 0)
@@ -1378,6 +1388,9 @@ class ProfileBufferService {
   Future<void> _loadInitialProfiles() async {
     if (_isFetching || _isLoadingInitial) return;
     
+    final loadStartTime = DateTime.now();
+    print('[PERF] ProfileBuffer: Starting initial profile load');
+    
     _isLoadingInitial = true;
     _notifyListeners();
     
@@ -1390,6 +1403,8 @@ class ProfileBufferService {
         failedImagesService: _failedImagesService,
       );
       
+      print('[PERF] ProfileBuffer: Fetched ${candidateProfiles.length} candidate profiles in ${DateTime.now().difference(loadStartTime).inMilliseconds}ms');
+      
       if (candidateProfiles.isNotEmpty) {
         // Add to staging buffer
         _stagingBuffer.addAll(candidateProfiles);
@@ -1398,6 +1413,9 @@ class ProfileBufferService {
         await _prepareProfilesForPresentation();
         
         _hasInitializedBuffer = true;
+        
+        final totalTime = DateTime.now().difference(loadStartTime).inMilliseconds;
+        print('[PERF] ProfileBuffer: Initial profiles ready - ${_profileBuffer.length} profiles in ${totalTime}ms');
         
         if (kDebugMode) {
           print('Initial profiles ready: ${_profileBuffer.length}');
