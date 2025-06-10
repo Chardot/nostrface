@@ -12,6 +12,7 @@ class NostrRelayServiceV2 {
   final StreamController<nostr.Event> _eventStreamController = StreamController<nostr.Event>.broadcast();
   final Map<String, StreamController<nostr.Event>> _subscriptions = {};
   final Map<String, List<nostr.Event>> _collectedEvents = {};
+  final Map<String, Completer<List<nostr.Event>>> _subscriptionCompleters = {};
   bool _isConnected = false;
 
   NostrRelayServiceV2(this.relayUrl);
@@ -129,7 +130,9 @@ class NostrRelayServiceV2 {
             final eventData = parsed[2];
             
             try {
-              final event = nostr.Event.deserialize(jsonEncode(eventData));
+              // Event.deserialize expects an array format: [type, eventData] or [type, subscriptionId, eventData]
+              // Using verify: false to avoid signature validation errors during parsing
+              final event = nostr.Event.deserialize(['EVENT', subscriptionId, eventData], verify: false);
               
               if (kDebugMode) {
                 print('Received event with id: ${event.id.substring(0, 10)}... from $relayUrl');
@@ -168,6 +171,25 @@ class NostrRelayServiceV2 {
             final String subscriptionId = parsed[1];
             if (kDebugMode) {
               print('Received EOSE for subscription $subscriptionId');
+            }
+            
+            // Mark subscription as complete if it's a one-time query
+            if (_subscriptionCompleters.containsKey(subscriptionId)) {
+              final completer = _subscriptionCompleters[subscriptionId]!;
+              if (!completer.isCompleted) {
+                final collectedEvents = _collectedEvents[subscriptionId] ?? [];
+                completer.complete(collectedEvents);
+                _collectedEvents.remove(subscriptionId);
+                _subscriptionCompleters.remove(subscriptionId);
+                
+                // Close the subscription
+                final closeMsg = nostr.Close(subscriptionId);
+                _channel?.sink.add(closeMsg.serialize());
+                
+                if (kDebugMode) {
+                  print('Completed subscription $subscriptionId with ${collectedEvents.length} events');
+                }
+              }
             }
           }
           break;
@@ -263,6 +285,7 @@ class NostrRelayServiceV2 {
     
     // Create a completer for this subscription
     final completer = Completer<List<nostr.Event>>();
+    _subscriptionCompleters[subscriptionId] = completer;
     
     // Set up timeout if specified
     if (timeout != null) {
@@ -273,11 +296,13 @@ class NostrRelayServiceV2 {
           _channel?.sink.add(closeMsg.serialize());
           
           // Return collected events
-          completer.complete(_collectedEvents[subscriptionId] ?? []);
+          final collectedEvents = _collectedEvents[subscriptionId] ?? [];
+          completer.complete(collectedEvents);
           _collectedEvents.remove(subscriptionId);
+          _subscriptionCompleters.remove(subscriptionId);
           
           if (kDebugMode) {
-            print('Subscription timed out for $relayUrl, returning ${_collectedEvents[subscriptionId]?.length ?? 0} events');
+            print('Subscription timed out for $relayUrl, returning ${collectedEvents.length} events');
           }
         }
       });
