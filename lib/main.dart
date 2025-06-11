@@ -3,9 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:nostrface/core/config/app_router.dart';
 import 'package:nostrface/core/config/theme.dart';
-import 'package:nostrface/core/providers/app_providers.dart';
+import 'package:nostrface/core/providers/app_providers_ndk.dart';
 import 'package:nostrface/core/services/discarded_profiles_service.dart';
 import 'package:nostrface/core/services/note_cache_service.dart';
+import 'package:logging/logging.dart';
 
 // Global variable to track app start time
 late final DateTime appStartTime;
@@ -18,6 +19,12 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final bindingTime = DateTime.now();
   print('[PERF] Flutter binding initialized: ${bindingTime.difference(appStartTime).inMilliseconds}ms from start');
+  
+  // Configure logging
+  Logger.root.level = Level.ALL;
+  Logger.root.onRecord.listen((record) {
+    print('${record.level.name}: ${record.time}: ${record.message}');
+  });
   
   // Initialize Hive for local storage
   final hiveStartTime = DateTime.now();
