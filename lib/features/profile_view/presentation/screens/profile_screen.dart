@@ -11,6 +11,7 @@ import 'package:nostrface/features/direct_messages/presentation/widgets/dm_compo
 import 'package:nostrface/core/widgets/formatted_content.dart';
 import 'package:nostrface/features/profile_view/presentation/widgets/share_note_sheet.dart';
 import 'package:nostrface/features/profile_view/presentation/widgets/share_profile_sheet.dart';
+import 'package:nostrface/core/utils/cors_helper.dart';
 
 // Provider for fetching recent notes from a user with auto-refresh
 final userNotesProvider = FutureProvider.family.autoDispose<List<NostrEvent>, String>((ref, pubkey) async {
@@ -64,18 +65,42 @@ class ProfileScreen extends ConsumerWidget {
                 flexibleSpace: FlexibleSpaceBar(
                   title: Text(profile.displayNameOrName),
                   background: profile.picture != null
-                    ? CachedNetworkImage(
-                        imageUrl: profile.picture!,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => const Center(
-                          child: CircularProgressIndicator(),
-                        ),
-                        errorWidget: (context, url, error) => Container(
-                          color: Colors.grey[300],
-                          child: const Center(
-                            child: Icon(Icons.error, size: 50),
-                          ),
-                        ),
+                    ? Builder(
+                        builder: (context) {
+                          final imageUrl = CorsHelper.wrapWithCorsProxy(profile.picture!);
+                          
+                          if (kDebugMode && profile.picture!.contains('misskey')) {
+                            print('[ProfileScreen] Loading profile image: ${profile.picture}');
+                            if (imageUrl != profile.picture) {
+                              print('[ProfileScreen] Using CORS proxy: $imageUrl');
+                            }
+                          }
+                          
+                          return CachedNetworkImage(
+                            imageUrl: imageUrl,
+                            fit: BoxFit.cover,
+                            httpHeaders: const {
+                              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                              'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+                              'Accept-Language': 'en-US,en;q=0.9',
+                            },
+                            placeholder: (context, url) => const Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                            errorWidget: (context, url, error) {
+                              if (kDebugMode) {
+                                print('[ProfileScreen] ❌ Image loading error: $error');
+                                print('[ProfileScreen] Failed URL: $url');
+                              }
+                              return Container(
+                                color: Colors.grey[300],
+                                child: const Center(
+                                  child: Icon(Icons.error, size: 50),
+                                ),
+                              );
+                            },
+                          );
+                        },
                       )
                     : Container(
                         color: Colors.grey[300],
@@ -267,7 +292,12 @@ class ProfileScreen extends ConsumerWidget {
                                   children: [
                                     CircleAvatar(
                                       backgroundImage: profile.picture != null
-                                        ? CachedNetworkImageProvider(profile.picture!)
+                                        ? CachedNetworkImageProvider(
+                                            CorsHelper.wrapWithCorsProxy(profile.picture!),
+                                            headers: const {
+                                              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+                                            },
+                                          )
                                         : null,
                                       child: profile.picture == null
                                         ? const Icon(Icons.person)

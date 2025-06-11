@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:nostrface/core/models/nostr_profile.dart';
 import 'package:http/http.dart' as http;
+import 'package:nostrface/core/utils/cors_helper.dart';
 
 /// Service to check if profiles are ready for presentation
 class ProfileReadinessService {
@@ -71,15 +72,23 @@ class ProfileReadinessService {
   
   /// Check if an image is preloaded and ready
   Future<bool> _isImagePreloaded(String imageUrl) async {
-    // Check cache first
+    // Check cache first (using original URL)
     if (_imagePreloadCache.containsKey(imageUrl)) {
       return _imagePreloadCache[imageUrl]!;
     }
     
     try {
-      // First, try to get it from cache
+      // First, try to get it from cache (check both original and CORS-wrapped URLs)
       final cacheManager = DefaultCacheManager();
-      final fileInfo = await cacheManager.getFileFromCache(imageUrl);
+      final corsUrl = CorsHelper.wrapWithCorsProxy(imageUrl);
+      
+      // Check original URL first
+      var fileInfo = await cacheManager.getFileFromCache(imageUrl);
+      
+      // If not found and CORS proxy is needed, check CORS URL
+      if (fileInfo == null && corsUrl != imageUrl) {
+        fileInfo = await cacheManager.getFileFromCache(corsUrl);
+      }
       
       if (fileInfo != null && fileInfo.file.existsSync()) {
         _imagePreloadCache[imageUrl] = true;
@@ -102,39 +111,51 @@ class ProfileReadinessService {
       return false;
     }
     
-    final imageUrl = profile.picture!;
+    // Use the original URL for cache key, but download with CORS proxy if needed
+    final originalUrl = profile.picture!;
+    final downloadUrl = CorsHelper.wrapWithCorsProxy(originalUrl);
     
-    // Check if already preloaded
-    if (_imagePreloadCache[imageUrl] == true) {
+    // Check if already preloaded (using original URL as key)
+    if (_imagePreloadCache[originalUrl] == true) {
       return true;
     }
     
     try {
       if (kDebugMode) {
-        print('Preloading image for profile ${profile.displayNameOrName}: $imageUrl');
+        print('[ProfileReadiness] Preloading image for ${profile.displayNameOrName}: $originalUrl');
+        if (downloadUrl != originalUrl) {
+          print('[ProfileReadiness] Using CORS proxy: $downloadUrl');
+        }
       }
       
       // Download and cache the image
       final cacheManager = DefaultCacheManager();
       
-      // First try to download the file
-      final file = await cacheManager.downloadFile(imageUrl);
+      // Try to download the file with appropriate headers
+      final file = await cacheManager.downloadFile(
+        downloadUrl,
+        authHeaders: const {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      );
       
       if (file.file.existsSync()) {
-        _imagePreloadCache[imageUrl] = true;
+        _imagePreloadCache[originalUrl] = true;
         if (kDebugMode) {
-          print('Successfully preloaded image for ${profile.displayNameOrName}');
+          print('[ProfileReadiness] ✅ Successfully preloaded image for ${profile.displayNameOrName}');
         }
         return true;
       }
       
-      _imagePreloadCache[imageUrl] = false;
+      _imagePreloadCache[originalUrl] = false;
       return false;
     } catch (e) {
       if (kDebugMode) {
-        print('Failed to preload image for ${profile.displayNameOrName}: $e');
+        print('[ProfileReadiness] ❌ Failed to preload image for ${profile.displayNameOrName}: $e');
       }
-      _imagePreloadCache[imageUrl] = false;
+      _imagePreloadCache[originalUrl] = false;
       return false;
     }
   }

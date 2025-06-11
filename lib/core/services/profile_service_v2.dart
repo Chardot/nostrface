@@ -187,6 +187,17 @@ class ProfileServiceV2 {
       try {
         final profile = NostrProfile.fromMetadataEvent(latestEvent.pubkey, latestEvent.content);
         
+        // Debug logging for specific profile
+        if (pubkey == '515b9246a72a47188ac60b7c4203f127accf210af53cc5db668c9ec6d2005497') {
+          if (kDebugMode) {
+            print('[ProfileServiceV2] Fetched profile 129aefr...:');
+            print('  Raw content: ${latestEvent.content}');
+            print('  Parsed picture: ${profile.picture}');
+            print('  Parsed name: ${profile.name}');
+            print('  Parsed displayName: ${profile.displayName}');
+          }
+        }
+        
         // Save to cache and storage
         _profiles[pubkey] = profile;
         

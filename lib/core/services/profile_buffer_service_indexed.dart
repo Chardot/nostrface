@@ -249,6 +249,13 @@ class ProfileBufferServiceIndexed {
           
           // Validate profile
           if (!_isValidProfile(profile)) {
+            if (kDebugMode) {
+              print('[ProfileBuffer] Invalid profile ${profile.pubkey}: picture=${profile.picture}, name=${profile.name}, displayName=${profile.displayName}, about=${profile.about?.substring(0, 50) ?? "null"}');
+              // Special check for the problematic profile
+              if (profile.pubkey == '515b9246a72a47188ac60b7c4203f127accf210af53cc5db668c9ec6d2005497') {
+                print('[ProfileBuffer] SPECIAL CHECK - Profile 129aefr... has picture URL: ${profile.picture}');
+              }
+            }
             return null;
           }
           
@@ -279,17 +286,47 @@ class ProfileBufferServiceIndexed {
       final validProfiles = results.where((p) => p != null).cast<NostrProfile>().toList();
       
       if (validProfiles.isNotEmpty) {
-        // Add to buffer and mark as seen
+        // Preload images for valid profiles before adding to buffer
+        final preloadedProfiles = <NostrProfile>[];
+        
         for (final profile in validProfiles) {
-          _profileBuffer.add(profile);
-          _seenProfileIds.add(profile.pubkey);
+          // Try to preload the image
+          bool imageReady = false;
+          if (profile.picture != null) {
+            imageReady = await _readinessService.preloadProfileImage(profile);
+            
+            if (!imageReady && kDebugMode) {
+              print('[ProfileBuffer] Failed to preload image for ${profile.displayNameOrName}, skipping profile');
+            }
+          }
+          
+          // Only add profiles with successfully preloaded images
+          if (imageReady) {
+            preloadedProfiles.add(profile);
+            _seenProfileIds.add(profile.pubkey);
+          } else {
+            // Mark as seen so we don't try again
+            _seenProfileIds.add(profile.pubkey);
+            
+            // Also mark the image as failed if it exists
+            if (profile.picture != null && _failedImagesService != null) {
+              await _failedImagesService.markImageAsFailed(profile.picture!);
+            }
+          }
         }
         
-        if (kDebugMode) {
-          print('[ProfileBuffer] Added ${validProfiles.length} profiles to buffer. Total: ${_profileBuffer.length}');
+        // Add preloaded profiles to buffer
+        if (preloadedProfiles.isNotEmpty) {
+          for (final profile in preloadedProfiles) {
+            _profileBuffer.add(profile);
+          }
+          
+          if (kDebugMode) {
+            print('[ProfileBuffer] Added ${preloadedProfiles.length} profiles (out of ${validProfiles.length}) to buffer. Total: ${_profileBuffer.length}');
+          }
+          
+          _notifyListeners();
         }
-        
-        _notifyListeners();
       }
       
       // Small delay between batches
@@ -313,8 +350,22 @@ class ProfileBufferServiceIndexed {
         if (!_seenProfileIds.contains(profile.pubkey) &&
             !_profileService.isProfileFollowed(profile.pubkey) &&
             (_discardedService == null || !_discardedService.isDiscarded(profile.pubkey))) {
-          _profileBuffer.add(profile);
-          _seenProfileIds.add(profile.pubkey);
+          
+          // Preload image before adding to buffer
+          bool imageReady = false;
+          if (profile.picture != null) {
+            imageReady = await _readinessService.preloadProfileImage(profile);
+          }
+          
+          if (imageReady) {
+            _profileBuffer.add(profile);
+            _seenProfileIds.add(profile.pubkey);
+          } else {
+            _seenProfileIds.add(profile.pubkey);
+            if (profile.picture != null && _failedImagesService != null) {
+              await _failedImagesService.markImageAsFailed(profile.picture!);
+            }
+          }
         }
       }
       
