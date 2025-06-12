@@ -92,7 +92,7 @@ class ProfileServiceNdk {
 
     try {
       // Fetch from NDK
-      final metadata = await _ndkService.getMetadata(pubkey).firstOrNull;
+      final metadata = await _ndkService.getMetadata(pubkey);
       if (metadata != null) {
         final profile = NostrProfileAdapter.fromMetadata(metadata);
         await _cacheProfile(profile);
@@ -122,9 +122,7 @@ class ProfileServiceNdk {
     // Fetch uncached profiles
     if (uncachedPubkeys.isNotEmpty) {
       try {
-        final metadataMap = await _ndkService
-            .getMetadataMultiple(uncachedPubkeys)
-            .firstOrNull ?? {};
+        final metadataMap = await _ndkService.getMetadataMultiple(uncachedPubkeys);
         
         for (final entry in metadataMap.entries) {
           final profile = NostrProfileAdapter.fromMetadata(entry.value);
@@ -207,7 +205,6 @@ class ProfileServiceNdk {
       var contactList = await getContactList() ?? ContactList(
         pubKey: userPubkey,
         contacts: [],
-        createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
       );
 
       // Toggle follow status
@@ -221,6 +218,7 @@ class ProfileServiceNdk {
 
       // Create and publish the event
       final event = contactList.toEvent(_signer);
+      await _signer.sign(event);
       await _ndkService.publishEvent(event);
 
       // Update local cache
@@ -244,12 +242,12 @@ class ProfileServiceNdk {
       }
 
       // Create metadata event
-      final metadata = profile.toMetadata();
+      final metadata = NostrProfileAdapter.toMetadata(profile);
       final event = metadata.toEvent();
       
       // Sign and publish
-      final signedEvent = await _signer.sign(event);
-      await _ndkService.publishEvent(signedEvent);
+      await _signer.sign(event);
+      await _ndkService.publishEvent(event);
 
       // Update cache
       await _cacheProfile(profile);

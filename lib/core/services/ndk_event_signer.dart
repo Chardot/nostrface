@@ -13,7 +13,7 @@ class NdkEventSigner implements EventSigner {
   NdkEventSigner(this._keyService);
 
   @override
-  Future<Nip01Event> sign(Nip01Event event) async {
+  Future<void> sign(Nip01Event event) async {
     final privateKey = await _keyService.getPrivateKey();
     if (privateKey == null) {
       throw Exception('No private key available for signing');
@@ -50,19 +50,16 @@ class NdkEventSigner implements EventSigner {
     final messageBytes = utf8.encode(message);
     final messageHash = sha256.convert(messageBytes).bytes;
     
+    // Generate random aux for signing
+    final aux = hex.encode(List<int>.generate(32, (i) => 
+      DateTime.now().millisecondsSinceEpoch * i % 256));
+    
     // Sign with bip340
-    final signature = bip340.sign(privateKey, hex.encode(messageHash));
+    final signature = bip340.sign(privateKey, hex.encode(messageHash), aux);
 
-    // Return signed event
-    return Nip01Event(
-      id: eventId,
-      pubKey: event.pubKey,
-      createdAt: event.createdAt,
-      kind: event.kind,
-      tags: event.tags,
-      content: event.content,
-      sig: signature,
-    );
+    // Update event fields directly
+    event.id = eventId;
+    event.sig = signature;
   }
 
   @override
@@ -103,24 +100,22 @@ class NdkEventSigner implements EventSigner {
 
   @override
   Future<String?> encryptNip44({
-    required String msg,
-    required String destPubKey,
-    String? id,
+    required String plaintext,
+    required String recipientPubKey,
   }) async {
     // NIP-44 not implemented in old library
     // Fall back to NIP-04 for now
-    return encrypt(msg, destPubKey, id: id);
+    return encrypt(plaintext, recipientPubKey);
   }
 
   @override
   Future<String?> decryptNip44({
-    required String msg,
-    required String destPubKey,
-    String? id,
+    required String ciphertext,
+    required String senderPubKey,
   }) async {
     // NIP-44 not implemented in old library
     // Fall back to NIP-04 for now
-    return decrypt(msg, destPubKey, id: id);
+    return decrypt(ciphertext, senderPubKey);
   }
 
   @override

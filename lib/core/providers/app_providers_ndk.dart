@@ -77,7 +77,7 @@ final servicesInitializerProvider = FutureProvider<void>((ref) async {
   await discardedService.initialize();
   
   final failedImagesService = ref.read(failedImagesServiceProvider);
-  await failedImagesService.initialize();
+  await failedImagesService.init();
 });
 
 /// Current user pubkey provider
@@ -138,13 +138,12 @@ final discardedProfilesServiceProvider = Provider<DiscardedProfilesService>((ref
 
 final failedImagesServiceProvider = Provider<FailedImagesService>((ref) {
   final service = FailedImagesService();
-  service.initialize();
+  service.init();
   return service;
 });
 
 final imageValidationServiceProvider = Provider<ImageValidationService>((ref) {
-  final failedImagesService = ref.watch(failedImagesServiceProvider);
-  return ImageValidationService(failedImagesService);
+  return ImageValidationService();
 });
 
 final profileBufferServiceIndexedProvider = Provider<ProfileBufferServiceIndexed>((ref) {
@@ -211,9 +210,4 @@ final listsServiceNdkProvider = Provider<ListsServiceNdk>((ref) {
   });
   
   return service;
-});
-
-/// Note cache service provider
-final noteCacheServiceProvider = Provider<NoteCacheService>((ref) {
-  return NoteCacheService();
 });

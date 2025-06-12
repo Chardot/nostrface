@@ -50,7 +50,7 @@ packages:
     source: hosted
     version: "0.2.2"
   bip340:
-    dependency: "direct main"
+    dependency: "direct overridden"
     description:
       name: bip340
       sha256: b7bcd70a860e605046006adaa72bc4f7453f4d31d7ba74a4ad9d5de387a0fc0b
@@ -615,6 +615,15 @@ packages:
       relative: true
     source: path
     version: "0.4.0"
+  nostr:
+    dependency: "direct main"
+    description:
+      path: "."
+      ref: main
+      resolved-ref: "78add74a6dfd93b84b9df50a9c0cc70c7e7f6956"
+      url: "https://github.com/ethicnology/dart-nostr.git"
+    source: git
+    version: "1.5.0"
   octo_image:
     dependency: transitive
     description:

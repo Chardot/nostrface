@@ -49,17 +49,17 @@ class DirectMessageServiceNdk {
       );
 
       // Sign and publish
-      final signedEvent = await _signer.sign(event);
-      await _ndkService.publishEvent(signedEvent);
+      await _signer.sign(event);
+      await _ndkService.publishEvent(event);
 
       // Add to stream
       _messageController.add(DirectMessage(
-        id: signedEvent.id,
+        id: event.id,
         senderPubkey: senderPubkey,
         recipientPubkey: recipientPubkey,
         content: content,
         encryptedContent: encrypted,
-        createdAt: signedEvent.createdAt,
+        createdAt: event.createdAt,
         isOutgoing: true,
       ));
 

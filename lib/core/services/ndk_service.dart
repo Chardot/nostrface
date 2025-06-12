@@ -50,28 +50,35 @@ class NdkService {
   /// Dispose NDK resources
   void dispose() {
     if (_isInitialized) {
-      ndk.dispose();
+      // NDK doesn't have a dispose method, just mark as not initialized
       _isInitialized = false;
-      _logger.info('NDK disposed');
+      _logger.info('NDK marked as disposed');
     }
   }
 
   /// Get metadata for a specific pubkey
-  Stream<Metadata?> getMetadata(String pubkey) {
+  Future<Metadata?> getMetadata(String pubkey) async {
     if (!_isInitialized) {
       throw StateError('NDK not initialized');
     }
     
-    return ndk.metadata.stream(pubkeys: [pubkey]);
+    return ndk.metadata.loadMetadata(pubkey);
   }
 
   /// Get metadata for multiple pubkeys
-  Stream<Map<String, Metadata>> getMetadataMultiple(List<String> pubkeys) {
+  Future<Map<String, Metadata>> getMetadataMultiple(List<String> pubkeys) async {
     if (!_isInitialized) {
       throw StateError('NDK not initialized');
     }
     
-    return ndk.metadata.streamMultiple(pubkeys: pubkeys);
+    final metadataMap = <String, Metadata>{};
+    for (final pubkey in pubkeys) {
+      final metadata = await ndk.metadata.loadMetadata(pubkey);
+      if (metadata != null) {
+        metadataMap[pubkey] = metadata;
+      }
+    }
+    return metadataMap;
   }
 
   /// Query events with filters
@@ -100,7 +107,8 @@ class NdkService {
       throw StateError('NDK not initialized');
     }
     
-    await ndk.broadcastEvent(event);
+    // Use broadcast instance from ndk
+    ndk.broadcast.broadcast(nostrEvent: event);
   }
 
   /// Get contact list for a pubkey
@@ -118,7 +126,7 @@ class NdkService {
             limit: 1,
           ),
         ],
-      ).stream.firstOrNull;
+      ).stream.first;
 
       if (response != null) {
         return ContactList.fromEvent(response);

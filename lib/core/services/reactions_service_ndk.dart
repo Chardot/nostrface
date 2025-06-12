@@ -116,7 +116,7 @@ class ReactionsServiceNdk {
       await for (final event in _ndkService.queryEvents([filter])) {
         final reaction = Reaction(
           id: event.id,
-          pubKey: event.pubKey,
+          pubkey: event.pubKey,
           eventId: eventId,
           reaction: event.content,
           createdAt: event.createdAt,

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ndk/ndk.dart';
 import 'package:nostrface/core/services/ndk_service.dart';
@@ -20,23 +21,20 @@ final ndkProvider = FutureProvider<Ndk>((ref) async {
   return service.ndk;
 });
 
-/// Stream provider for fetching metadata by pubkey
-final metadataStreamProvider = StreamProvider.family<Metadata?, String>((ref, pubkey) {
+/// Future provider for fetching metadata by pubkey
+final metadataProvider = FutureProvider.family<Metadata?, String>((ref, pubkey) async {
   final service = ref.watch(ndkServiceProvider);
   if (!service.isInitialized) {
-    // Initialize if not done yet
-    ref.read(ndkProvider);
-    return const Stream.empty();
+    await ref.read(ndkProvider.future);
   }
   return service.getMetadata(pubkey);
 });
 
-/// Stream provider for fetching multiple metadata
-final multipleMetadataStreamProvider = StreamProvider.family<Map<String, Metadata>, List<String>>((ref, pubkeys) {
+/// Future provider for fetching multiple metadata
+final multipleMetadataProvider = FutureProvider.family<Map<String, Metadata>, List<String>>((ref, pubkeys) async {
   final service = ref.watch(ndkServiceProvider);
   if (!service.isInitialized) {
-    ref.read(ndkProvider);
-    return const Stream.empty();
+    await ref.read(ndkProvider.future);
   }
   return service.getMetadataMultiple(pubkeys);
 });
@@ -93,17 +91,21 @@ final profileDiscoveryStreamProvider = StreamProvider<List<Metadata>>((ref) asyn
   final filter = Filter(
     kinds: [0], // Metadata kind
     limit: 100,
-    since: DateTime.now().subtract(const Duration(days: 7)),
+    since: DateTime.now().subtract(const Duration(days: 7)).millisecondsSinceEpoch ~/ 1000,
   );
 
   final metadataMap = <String, Metadata>{};
   
   await for (final event in service.queryEvents([filter])) {
     try {
-      final metadata = Metadata.fromNip01Event(event);
+      // Parse metadata from event content
+      final content = event.content;
+      final json = jsonDecode(content) as Map<String, dynamic>;
+      final metadata = Metadata.fromJson(json);
+      metadata.pubKey = event.pubKey;
       // Only add if has picture and not already in map
       if (metadata.picture != null && metadata.picture!.isNotEmpty) {
-        metadataMap[event.pubkey] = metadata;
+        metadataMap[event.pubKey] = metadata;
         yield metadataMap.values.toList();
       }
     } catch (e) {

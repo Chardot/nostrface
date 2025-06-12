@@ -25,17 +25,17 @@ class ListsServiceNdk {
 
   /// Get user's mute list
   Future<Nip51List?> getMuteList() async {
-    return await _getList(Nip51List.kMuteListKind);
+    return await _getList(Nip51List.kMute);
   }
 
   /// Get user's bookmark list
   Future<Nip51List?> getBookmarkList() async {
-    return await _getList(Nip51List.kPublicBookmarksListKind);
+    return await _getList(Nip51List.kBookmarks);
   }
 
   /// Get user's pin list
   Future<Nip51List?> getPinList() async {
-    return await _getList(Nip51List.kPinListKind);
+    return await _getList(Nip51List.kPin);
   }
 
   /// Get a specific list by kind
@@ -55,9 +55,10 @@ class ListsServiceNdk {
         limit: 1,
       );
 
-      final event = await _ndkService.queryEvents([filter]).firstOrNull;
+      final events = await _ndkService.queryEvents([filter]).toList();
+      final event = events.isNotEmpty ? events.first : null;
       if (event != null) {
-        final list = Nip51List.fromNip01Event(event);
+        final list = await Nip51List.fromEvent(event, _signer);
         _listsCache[cacheKey] = list;
         return list;
       }
@@ -72,55 +73,62 @@ class ListsServiceNdk {
   /// Add item to mute list
   Future<void> muteUser(String pubkey) async {
     await _addToList(
-      kind: Nip51List.kMuteListKind,
-      tag: ['p', pubkey],
+      kind: Nip51List.kMute,
+      tagType: Nip51List.kPubkey,
+      value: pubkey,
     );
   }
 
   /// Remove item from mute list
   Future<void> unmuteUser(String pubkey) async {
     await _removeFromList(
-      kind: Nip51List.kMuteListKind,
-      tag: ['p', pubkey],
+      kind: Nip51List.kMute,
+      tagType: Nip51List.kPubkey,
+      value: pubkey,
     );
   }
 
   /// Add event to bookmark list
   Future<void> bookmarkEvent(String eventId) async {
     await _addToList(
-      kind: Nip51List.kPublicBookmarksListKind,
-      tag: ['e', eventId],
+      kind: Nip51List.kBookmarks,
+      tagType: Nip51List.kThread,
+      value: eventId,
     );
   }
 
   /// Remove event from bookmark list
   Future<void> unbookmarkEvent(String eventId) async {
     await _removeFromList(
-      kind: Nip51List.kPublicBookmarksListKind,
-      tag: ['e', eventId],
+      kind: Nip51List.kBookmarks,
+      tagType: Nip51List.kThread,
+      value: eventId,
     );
   }
 
   /// Add event to pin list
   Future<void> pinEvent(String eventId) async {
     await _addToList(
-      kind: Nip51List.kPinListKind,
-      tag: ['e', eventId],
+      kind: Nip51List.kPin,
+      tagType: Nip51List.kThread,
+      value: eventId,
     );
   }
 
   /// Remove event from pin list
   Future<void> unpinEvent(String eventId) async {
     await _removeFromList(
-      kind: Nip51List.kPinListKind,
-      tag: ['e', eventId],
+      kind: Nip51List.kPin,
+      tagType: Nip51List.kThread,
+      value: eventId,
     );
   }
 
   /// Add item to a list
   Future<void> _addToList({
     required int kind,
-    required List<String> tag,
+    required String tagType,
+    required String value,
   }) async {
     try {
       final userPubkey = await _signer.getPublicKeyAsync();
@@ -128,38 +136,35 @@ class ListsServiceNdk {
       // Get existing list or create new one
       var list = await _getList(kind) ?? Nip51List(
         pubKey: userPubkey,
-        tags: [],
+        elements: [],
         createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
         kind: kind,
       );
 
       // Check if already in list
-      if (list.tags.any((t) => _tagsEqual(t, tag))) {
+      if (list.elements.any((e) => e.tag == tagType && e.value == value)) {
         _logger.info('Item already in list');
         return;
       }
 
       // Add to list
-      final updatedTags = List<List<String>>.from(list.tags)..add(tag);
+      list.elements.add(Nip51ListElement(
+        tag: tagType,
+        value: value,
+        private: false,
+      ));
       
-      // Create updated event
-      final event = Nip01Event(
-        pubKey: userPubkey,
-        createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-        kind: kind,
-        tags: updatedTags,
-        content: '',
-      );
+      // Create event from list
+      final event = await _createEventFromList(list);
 
       // Sign and publish
-      final signedEvent = await _signer.sign(event);
-      await _ndkService.publishEvent(signedEvent);
+      await _signer.sign(event);
+      await _ndkService.publishEvent(event);
 
       // Update cache
-      final updatedList = Nip51List.fromNip01Event(signedEvent);
       final cacheKey = '${userPubkey}_$kind';
-      _listsCache[cacheKey] = updatedList;
-      _listUpdatesController.add(updatedList);
+      _listsCache[cacheKey] = list;
+      _listUpdatesController.add(list);
 
       _logger.info('Added item to list kind $kind');
     } catch (e) {
@@ -171,7 +176,8 @@ class ListsServiceNdk {
   /// Remove item from a list
   Future<void> _removeFromList({
     required int kind,
-    required List<String> tag,
+    required String tagType,
+    required String value,
   }) async {
     try {
       final userPubkey = await _signer.getPublicKeyAsync();
@@ -184,27 +190,19 @@ class ListsServiceNdk {
       }
 
       // Remove from list
-      final updatedTags = List<List<String>>.from(list.tags)
-        ..removeWhere((t) => _tagsEqual(t, tag));
+      list.elements.removeWhere((e) => e.tag == tagType && e.value == value);
       
-      // Create updated event
-      final event = Nip01Event(
-        pubKey: userPubkey,
-        createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-        kind: kind,
-        tags: updatedTags,
-        content: '',
-      );
+      // Create event from list
+      final event = await _createEventFromList(list);
 
       // Sign and publish
-      final signedEvent = await _signer.sign(event);
-      await _ndkService.publishEvent(signedEvent);
+      await _signer.sign(event);
+      await _ndkService.publishEvent(event);
 
       // Update cache
-      final updatedList = Nip51List.fromNip01Event(signedEvent);
       final cacheKey = '${userPubkey}_$kind';
-      _listsCache[cacheKey] = updatedList;
-      _listUpdatesController.add(updatedList);
+      _listsCache[cacheKey] = list;
+      _listUpdatesController.add(list);
 
       _logger.info('Removed item from list kind $kind');
     } catch (e) {
@@ -213,13 +211,21 @@ class ListsServiceNdk {
     }
   }
 
-  /// Check if two tags are equal
-  bool _tagsEqual(List<String> tag1, List<String> tag2) {
-    if (tag1.length != tag2.length) return false;
-    for (int i = 0; i < tag1.length; i++) {
-      if (tag1[i] != tag2[i]) return false;
-    }
-    return true;
+  /// Create Nip01Event from Nip51List
+  Future<Nip01Event> _createEventFromList(Nip51List list) async {
+    // Build tags from elements
+    final tags = list.elements
+        .where((e) => !e.private)
+        .map((e) => [e.tag, e.value])
+        .toList();
+
+    return Nip01Event(
+      pubKey: list.pubKey,
+      createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      kind: list.kind,
+      tags: tags,
+      content: '', // TODO: Handle private elements with encryption
+    );
   }
 
   /// Check if user is muted
@@ -227,9 +233,7 @@ class ListsServiceNdk {
     final muteList = await getMuteList();
     if (muteList == null) return false;
     
-    return muteList.tags.any((tag) => 
-      tag.length >= 2 && tag[0] == 'p' && tag[1] == pubkey
-    );
+    return muteList.pubKeys.any((element) => element.value == pubkey);
   }
 
   /// Check if event is bookmarked
@@ -237,9 +241,7 @@ class ListsServiceNdk {
     final bookmarkList = await getBookmarkList();
     if (bookmarkList == null) return false;
     
-    return bookmarkList.tags.any((tag) => 
-      tag.length >= 2 && tag[0] == 'e' && tag[1] == eventId
-    );
+    return bookmarkList.threads.any((element) => element.value == eventId);
   }
 
   /// Get all muted users
@@ -247,10 +249,7 @@ class ListsServiceNdk {
     final muteList = await getMuteList();
     if (muteList == null) return [];
     
-    return muteList.tags
-        .where((tag) => tag.length >= 2 && tag[0] == 'p')
-        .map((tag) => tag[1])
-        .toList();
+    return muteList.pubKeys.map((e) => e.value).toList();
   }
 
   /// Get all bookmarked events
@@ -258,10 +257,7 @@ class ListsServiceNdk {
     final bookmarkList = await getBookmarkList();
     if (bookmarkList == null) return [];
     
-    return bookmarkList.tags
-        .where((tag) => tag.length >= 2 && tag[0] == 'e')
-        .map((tag) => tag[1])
-        .toList();
+    return bookmarkList.threads.map((e) => e.value).toList();
   }
 
   /// Clear cache
