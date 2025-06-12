@@ -1,4 +1,4 @@
-import 'package:nostr/nostr.dart' as nostr;
+import 'package:nostrface/core/utils/nostr_legacy_support.dart' as nostr;
 import 'package:bech32/bech32.dart';
 import 'dart:convert';
 import 'dart:typed_data';

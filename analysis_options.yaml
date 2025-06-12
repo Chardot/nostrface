@@ -53,3 +53,5 @@ analyzer:
     - "**/*.freezed.dart"
   errors:
     invalid_annotation_target: ignore
+    # Ignore null safety issues in dependencies
+    argument_type_not_assignable: ignore

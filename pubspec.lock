@@ -194,7 +194,7 @@ packages:
     source: hosted
     version: "1.19.1"
   convert:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: convert
       sha256: b30acd5944035672bc15c6b7a8b47d773e41e2f17de064350988c5d02adb1c68
@@ -615,15 +615,6 @@ packages:
       relative: true
     source: path
     version: "0.4.0"
-  nostr:
-    dependency: "direct main"
-    description:
-      path: "."
-      ref: main
-      resolved-ref: "78add74a6dfd93b84b9df50a9c0cc70c7e7f6956"
-      url: "https://github.com/ethicnology/dart-nostr.git"
-    source: git
-    version: "1.5.0"
   octo_image:
     dependency: transitive
     description:

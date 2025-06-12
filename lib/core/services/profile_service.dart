@@ -14,7 +14,7 @@ import 'package:nostrface/core/services/profile_readiness_service.dart';
 import 'package:nostrface/core/providers/app_providers.dart';
 import 'package:hive/hive.dart';
 import 'package:uuid/uuid.dart';
-import 'package:nostr/nostr.dart' as nostr;
+import 'package:nostrface/core/utils/nostr_legacy_support.dart' as nostr;
 import 'package:nostrface/core/models/relay_publish_result.dart';
 
 /// Service for managing Nostr profile data

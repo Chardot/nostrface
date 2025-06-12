@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:nostr/nostr.dart' as nostr;
+import 'package:nostrface/core/utils/nostr_legacy_support.dart' as nostr;
 import 'package:nostrface/core/services/nostr_relay_service_improved.dart';
 
 /// Debug utility to test follow event publishing

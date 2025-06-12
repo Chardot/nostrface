@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive/hive.dart';
-import 'package:nostr/nostr.dart' as nostr;
+import 'package:nostrface/core/utils/nostr_legacy_support.dart' as nostr;
 
 /// Service for managing Nostr keys
 class KeyManagementService {

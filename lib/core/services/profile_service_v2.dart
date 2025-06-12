@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import 'package:nostr/nostr.dart' as nostr;
+import 'package:nostrface/core/utils/nostr_legacy_support.dart' as nostr;
 import 'package:nostrface/core/models/nostr_profile.dart';
 import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/core/services/nostr_relay_service_v2.dart';

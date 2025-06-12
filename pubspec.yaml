@@ -32,16 +32,12 @@ dependencies:
   equatable: ^2.0.5
   uuid: ^4.5.1
   crypto: ^3.0.3
+  convert: ^3.1.2
   # Nostr Development Kit
   ndk:
     path: ../ndk/packages/ndk
   # Add logging package
   logging: ^1.2.0
-  # Keep old nostr package during migration
-  nostr:
-    git:
-      url: https://github.com/ethicnology/dart-nostr.git
-      ref: main
   # Bech32 encoding/decoding for nprofile support
   bech32: ^0.2.2
   # Image loading and caching

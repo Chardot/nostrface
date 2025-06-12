@@ -6,7 +6,7 @@ import 'package:nostrface/core/services/key_management_service.dart';
 import 'package:nostrface/core/services/message_encryption_service.dart';
 import 'package:nostrface/core/services/nostr_relay_service.dart';
 import 'package:nostrface/core/providers/app_providers.dart';
-import 'package:nostr/nostr.dart' as nostr;
+import 'package:nostrface/core/utils/nostr_legacy_support.dart' as nostr;
 
 /// Service for handling direct messages
 class DirectMessageService {
