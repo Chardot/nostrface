@@ -35,6 +35,10 @@ dependencies:
   # Nostr Development Kit
   ndk:
     path: ../ndk/packages/ndk
+  # Add bip340 to match NDK version
+  bip340: ^0.3.0
+  # Add logging package
+  logging: ^1.2.0
   # Bech32 encoding/decoding for nprofile support
   bech32: ^0.2.2
   # Image loading and caching

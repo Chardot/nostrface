@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:logging/logging.dart';
+import 'package:logging/logging.dart' as logging;
 import 'package:ndk/ndk.dart';
 import 'package:nostrface/core/services/ndk_service.dart';
 import 'package:nostrface/core/services/ndk_event_signer.dart';
@@ -8,7 +8,7 @@ import 'package:nostrface/core/services/ndk_event_signer.dart';
 class ListsServiceNdk {
   final NdkService _ndkService;
   final NdkEventSigner _signer;
-  final _logger = Logger('ListsServiceNdk');
+  final _logger = logging.Logger('ListsServiceNdk');
   
   // Cache for lists
   final Map<String, Nip51List> _listsCache = {};
@@ -41,7 +41,7 @@ class ListsServiceNdk {
   /// Get a specific list by kind
   Future<Nip51List?> _getList(int kind) async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       final cacheKey = '${userPubkey}_$kind';
       
       // Check cache
@@ -123,11 +123,11 @@ class ListsServiceNdk {
     required List<String> tag,
   }) async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       
       // Get existing list or create new one
       var list = await _getList(kind) ?? Nip51List(
-        pubkey: userPubkey,
+        pubKey: userPubkey,
         tags: [],
         createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
         kind: kind,
@@ -144,7 +144,7 @@ class ListsServiceNdk {
       
       // Create updated event
       final event = Nip01Event(
-        pubkey: userPubkey,
+        pubKey: userPubkey,
         createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
         kind: kind,
         tags: updatedTags,
@@ -174,7 +174,7 @@ class ListsServiceNdk {
     required List<String> tag,
   }) async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       
       // Get existing list
       final list = await _getList(kind);
@@ -189,7 +189,7 @@ class ListsServiceNdk {
       
       // Create updated event
       final event = Nip01Event(
-        pubkey: userPubkey,
+        pubKey: userPubkey,
         createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
         kind: kind,
         tags: updatedTags,

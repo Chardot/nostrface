@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:logging/logging.dart';
+import 'package:logging/logging.dart' as logging;
 import 'package:ndk/ndk.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:nostrface/core/models/nostr_profile.dart';
@@ -12,7 +12,7 @@ import 'package:nostrface/core/services/ndk_event_signer.dart';
 class ProfileServiceNdk {
   final NdkService _ndkService;
   final NdkEventSigner _signer;
-  final _logger = Logger('ProfileServiceNdk');
+  final _logger = logging.Logger('ProfileServiceNdk');
   
   // Local cache using Hive
   late Box<Map> _profileBox;
@@ -72,7 +72,7 @@ class ProfileServiceNdk {
   /// Load cached following list
   Future<void> _loadCachedFollowing() async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       final followingData = _followingBox.get(userPubkey);
       if (followingData != null) {
         final following = Set<String>.from(followingData);
@@ -170,7 +170,7 @@ class ProfileServiceNdk {
   /// Get contact list for current user
   Future<ContactList?> getContactList() async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       return await _ndkService.getContactList(userPubkey);
     } catch (e) {
       _logger.severe('Failed to get contact list', e);
@@ -186,7 +186,7 @@ class ProfileServiceNdk {
       _followingController.add(following);
       
       // Cache following list
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       await _followingBox.put(userPubkey, following.toList());
       
       return following;
@@ -203,9 +203,9 @@ class ProfileServiceNdk {
   /// Toggle follow status
   Future<void> toggleFollowProfile(String pubkey) async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       var contactList = await getContactList() ?? ContactList(
-        pubkey: userPubkey,
+        pubKey: userPubkey,
         contacts: [],
         createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
       );
@@ -238,7 +238,7 @@ class ProfileServiceNdk {
   /// Update user profile
   Future<void> updateProfile(NostrProfile profile) async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       if (profile.pubkey != userPubkey) {
         throw Exception('Can only update own profile');
       }

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:logging/logging.dart';
+import 'package:logging/logging.dart' as logging;
 import 'package:ndk/ndk.dart';
 import 'package:nostrface/core/services/ndk_service.dart';
 import 'package:nostrface/core/services/ndk_event_signer.dart';
@@ -8,7 +8,7 @@ import 'package:nostrface/core/services/ndk_event_signer.dart';
 class ReactionsServiceNdk {
   final NdkService _ndkService;
   final NdkEventSigner _signer;
-  final _logger = Logger('ReactionsServiceNdk');
+  final _logger = logging.Logger('ReactionsServiceNdk');
   
   // Cache for reactions
   final Map<String, List<Reaction>> _reactionsCache = {};
@@ -29,11 +29,11 @@ class ReactionsServiceNdk {
     required String reaction,
   }) async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       
       // Create reaction event (kind 7)
       final event = Nip01Event(
-        pubkey: userPubkey,
+        pubKey: userPubkey,
         createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
         kind: 7, // Reaction kind
         tags: [
@@ -49,7 +49,7 @@ class ReactionsServiceNdk {
       // Update cache
       final reactionObj = Reaction(
         id: signedEvent.id,
-        pubkey: userPubkey,
+        pubKey: userPubkey,
         eventId: eventId,
         reaction: reaction,
         createdAt: signedEvent.createdAt,
@@ -74,11 +74,11 @@ class ReactionsServiceNdk {
     required String reactionEventId,
   }) async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       
       // Create deletion event (kind 5)
       final event = Nip01Event(
-        pubkey: userPubkey,
+        pubKey: userPubkey,
         createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
         kind: 5, // Deletion kind
         tags: [
@@ -116,7 +116,7 @@ class ReactionsServiceNdk {
       await for (final event in _ndkService.queryEvents([filter])) {
         final reaction = Reaction(
           id: event.id,
-          pubkey: event.pubkey,
+          pubKey: event.pubKey,
           eventId: eventId,
           reaction: event.content,
           createdAt: event.createdAt,
@@ -202,14 +202,14 @@ class ReactionsServiceNdk {
 /// Reaction model
 class Reaction {
   final String id;
-  final String pubkey;
+  final String pubKey;
   final String eventId;
   final String reaction;
   final int createdAt;
 
   Reaction({
     required this.id,
-    required this.pubkey,
+    required this.pubKey,
     required this.eventId,
     required this.reaction,
     required this.createdAt,

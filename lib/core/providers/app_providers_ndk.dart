@@ -10,6 +10,7 @@ import 'package:nostrface/core/services/image_validation_service.dart';
 import 'package:nostrface/core/services/profile_buffer_service_indexed.dart';
 import 'package:nostrface/core/services/profile_readiness_service.dart';
 import 'package:nostrface/core/services/indexer_api_service.dart';
+import 'package:nostrface/core/services/profile_service_v2.dart';
 import 'package:nostrface/core/services/reactions_service_ndk.dart';
 import 'package:nostrface/core/services/lists_service_ndk.dart';
 import 'package:nostrface/core/services/note_cache_service.dart';
@@ -136,7 +137,9 @@ final discardedProfilesServiceProvider = Provider<DiscardedProfilesService>((ref
 });
 
 final failedImagesServiceProvider = Provider<FailedImagesService>((ref) {
-  return FailedImagesService();
+  final service = FailedImagesService();
+  service.initialize();
+  return service;
 });
 
 final imageValidationServiceProvider = Provider<ImageValidationService>((ref) {
@@ -145,16 +148,14 @@ final imageValidationServiceProvider = Provider<ImageValidationService>((ref) {
 });
 
 final profileBufferServiceIndexedProvider = Provider<ProfileBufferServiceIndexed>((ref) {
+  final profileService = ref.watch(profileServiceV2Provider);
   final discardedService = ref.watch(discardedProfilesServiceProvider);
   final failedImagesService = ref.watch(failedImagesServiceProvider);
-  final readinessService = ref.watch(profileReadinessServiceProvider);
-  final indexerService = ref.watch(indexerApiServiceProvider);
   
   return ProfileBufferServiceIndexed(
-    discardedProfilesService: discardedService,
-    failedImagesService: failedImagesService,
-    profileReadinessService: readinessService,
-    indexerApiService: indexerService,
+    profileService,
+    discardedService,
+    failedImagesService,
   );
 });
 
@@ -164,6 +165,18 @@ final profileReadinessServiceProvider = Provider<ProfileReadinessService>((ref) 
 
 final indexerApiServiceProvider = Provider<IndexerApiService>((ref) {
   return IndexerApiService();
+});
+
+// Keep old ProfileServiceV2 for buffer service compatibility
+final profileServiceV2Provider = Provider<ProfileServiceV2>((ref) {
+  final keyService = ref.watch(keyManagementServiceProvider);
+  // TODO: Replace with relay service when migrating ProfileServiceV2
+  throw UnimplementedError('ProfileServiceV2 needs to be migrated to NDK');
+});
+
+// Note cache service provider
+final noteCacheServiceProvider = Provider<NoteCacheService>((ref) {
+  return NoteCacheService();
 });
 
 /// Reactions service provider (NDK-based)

@@ -15,6 +15,8 @@ class NostrProfile extends Equatable {
   final String? website;
   final String? nip05;
   final String? lud16;
+  final String? lud06;
+  final int? lastUpdated;
 
   const NostrProfile({
     required this.pubkey,
@@ -26,6 +28,8 @@ class NostrProfile extends Equatable {
     this.website,
     this.nip05,
     this.lud16,
+    this.lud06,
+    this.lastUpdated,
   });
 
   factory NostrProfile.fromJson(Map<String, dynamic> json) => 
@@ -44,6 +48,8 @@ class NostrProfile extends Equatable {
         website,
         nip05,
         lud16,
+        lud06,
+        lastUpdated,
       ];
 
   // Create a profile from a Kind 0 Nostr event

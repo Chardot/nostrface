@@ -1,15 +1,14 @@
 import 'dart:async';
-import 'package:logging/logging.dart';
+import 'package:logging/logging.dart' as logging;
 import 'package:ndk/ndk.dart';
 import 'package:nostrface/core/services/ndk_service.dart';
 import 'package:nostrface/core/services/ndk_event_signer.dart';
-import 'package:nostr/nostr.dart' as old_nostr;
 
 /// Direct message service using NDK
 class DirectMessageServiceNdk {
   final NdkService _ndkService;
   final NdkEventSigner _signer;
-  final _logger = Logger('DirectMessageServiceNdk');
+  final _logger = logging.Logger('DirectMessageServiceNdk');
   
   // Message stream controller
   final _messageController = StreamController<DirectMessage>.broadcast();
@@ -30,7 +29,7 @@ class DirectMessageServiceNdk {
     required String content,
   }) async {
     try {
-      final senderPubkey = await _signer.getPublicKey();
+      final senderPubkey = await _signer.getPublicKeyAsync();
       final senderPrivkey = await _getPrivateKey();
       
       // Use NIP-04 encryption for now (NIP-44 support coming)
@@ -42,7 +41,7 @@ class DirectMessageServiceNdk {
 
       // Create DM event
       final event = Nip01Event(
-        pubkey: senderPubkey,
+        pubKey: senderPubkey,
         createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
         kind: 4, // Encrypted DM kind
         tags: [['p', recipientPubkey]],
@@ -74,7 +73,7 @@ class DirectMessageServiceNdk {
   /// Subscribe to direct messages
   Future<void> subscribeToMessages() async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       
       // Subscribe to incoming DMs
       final incomingFilter = Filter(
@@ -112,7 +111,7 @@ class DirectMessageServiceNdk {
   /// Handle incoming message event
   Future<void> _handleIncomingMessage(Nip01Event event, bool isOutgoing) async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       final userPrivkey = await _getPrivateKey();
       
       String senderPubkey;
@@ -136,7 +135,7 @@ class DirectMessageServiceNdk {
           userPrivkey,
         );
       } else {
-        senderPubkey = event.pubkey;
+        senderPubkey = event.pubKey;
         recipientPubkey = userPubkey;
         
         // Decrypt using sender's pubkey
@@ -168,7 +167,7 @@ class DirectMessageServiceNdk {
   /// Get message history with a specific pubkey
   Future<List<DirectMessage>> getMessageHistory(String pubkey) async {
     try {
-      final userPubkey = await _signer.getPublicKey();
+      final userPubkey = await _signer.getPublicKeyAsync();
       final messages = <DirectMessage>[];
 
       // Get messages sent to the user from this pubkey
@@ -217,13 +216,9 @@ class DirectMessageServiceNdk {
     String recipientPubkey,
     String senderPrivkey,
   ) async {
-    // Use old nostr library for NIP-04 encryption (temporary)
-    final encrypted = old_nostr.Nip04.encrypt(
-      senderPrivkey,
-      recipientPubkey,
-      content,
-    );
-    return encrypted;
+    // TODO: Implement NIP-04 encryption without old nostr library
+    // For now, throw an error
+    throw UnimplementedError('NIP-04 encryption not yet implemented in NDK migration');
   }
 
   /// Decrypt message using NIP-04
@@ -233,13 +228,10 @@ class DirectMessageServiceNdk {
     String recipientPrivkey,
   ) async {
     try {
-      // Use old nostr library for NIP-04 decryption (temporary)
-      final decrypted = old_nostr.Nip04.decrypt(
-        recipientPrivkey,
-        senderPubkey,
-        encryptedContent,
-      );
-      return decrypted;
+      // TODO: Implement NIP-04 decryption without old nostr library
+      // For now, return null
+      _logger.warning('NIP-04 decryption not yet implemented in NDK migration');
+      return null;
     } catch (e) {
       _logger.warning('Failed to decrypt message: $e');
       return null;
@@ -250,7 +242,11 @@ class DirectMessageServiceNdk {
   Future<String> _getPrivateKey() async {
     // This is a temporary workaround - in production, use NDK's encryption
     // For now, we need to access the private key directly
-    throw UnimplementedError('Need to implement private key access for encryption');
+    final privateKey = await (_signer as NdkEventSigner).getPrivateKeyAsync();
+    if (privateKey == null) {
+      throw Exception('No private key available');
+    }
+    return privateKey;
   }
 
   /// Cancel all subscriptions

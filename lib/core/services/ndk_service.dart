@@ -1,11 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:ndk/ndk.dart';
-import 'package:logging/logging.dart';
+import 'package:logging/logging.dart' as logging;
 
 /// Centralized service for managing NDK instance
 class NdkService {
   late final Ndk ndk;
-  final _logger = Logger('NdkService');
+  final _logger = logging.Logger('NdkService');
   bool _isInitialized = false;
 
   bool get isInitialized => _isInitialized;
@@ -121,7 +121,7 @@ class NdkService {
       ).stream.firstOrNull;
 
       if (response != null) {
-        return ContactList.fromNip01Event(response);
+        return ContactList.fromEvent(response);
       }
       return null;
     } catch (e) {
@@ -135,6 +135,6 @@ class NdkService {
     final contactList = await getContactList(followerPubkey);
     if (contactList == null) return false;
     
-    return contactList.contacts.any((contact) => contact.pubkey == followeePubkey);
+    return contactList.contacts.contains(followeePubkey);
   }
 }

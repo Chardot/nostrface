@@ -3,57 +3,59 @@ import 'package:ndk/ndk.dart';
 import 'package:nostrface/core/models/nostr_event.dart';
 import 'package:nostrface/core/models/nostr_profile.dart';
 
-/// Extension to convert between NostrEvent and Nip01Event
-extension NostrEventAdapter on NostrEvent {
-  /// Convert NostrEvent to NDK's Nip01Event
-  Nip01Event toNip01Event() {
-    return Nip01Event(
-      id: id,
-      pubkey: pubkey,
-      createdAt: createdAt,
-      kind: kind,
-      tags: tags,
-      content: content,
-      sig: sig,
-    );
+/// Adapter functions for converting between existing models and NDK models
+class NostrEventAdapter {
+  /// Convert from existing NostrEvent to NDK Nip01Event
+  static Nip01Event toNip01Event(NostrEvent event) {
+    // Use fromJson to create with all fields including id and sig
+    return Nip01Event.fromJson({
+      'id': event.id,
+      'pubkey': event.pubkey,
+      'created_at': event.created_at,
+      'kind': event.kind,
+      'tags': event.tags,
+      'content': event.content,
+      'sig': event.sig,
+    });
   }
 
-  /// Create NostrEvent from NDK's Nip01Event
-  static NostrEvent fromNip01Event(Nip01Event ndkEvent) {
+  /// Convert from NDK Nip01Event to existing NostrEvent
+  static NostrEvent fromNip01Event(Nip01Event event) {
     return NostrEvent(
-      id: ndkEvent.id,
-      pubkey: ndkEvent.pubkey,
-      createdAt: ndkEvent.createdAt,
-      kind: ndkEvent.kind,
-      tags: ndkEvent.tags,
-      content: ndkEvent.content,
-      sig: ndkEvent.sig,
+      id: event.id,
+      pubkey: event.pubKey,
+      created_at: event.createdAt,
+      kind: event.kind,
+      tags: event.tags,
+      content: event.content,
+      sig: event.sig,
     );
   }
 }
 
-/// Extension to convert between NostrProfile and Metadata
-extension NostrProfileAdapter on NostrProfile {
+/// Adapter functions for NostrProfile and Metadata
+class NostrProfileAdapter {
   /// Convert NostrProfile to NDK's Metadata
-  Metadata toMetadata() {
+  static Metadata toMetadata(NostrProfile profile) {
     return Metadata(
-      pubkey: pubkey,
-      name: name,
-      displayName: displayName,
-      picture: picture,
-      banner: banner,
-      about: about,
-      website: website,
-      nip05: nip05,
-      lud16: lud16,
-      lud06: lud06,
+      pubKey: profile.pubkey,
+      name: profile.name,
+      displayName: profile.displayName,
+      picture: profile.picture,
+      banner: profile.banner,
+      about: profile.about,
+      website: profile.website,
+      nip05: profile.nip05,
+      lud16: profile.lud16,
+      lud06: profile.lud06,
+      updatedAt: profile.lastUpdated,
     );
   }
 
   /// Create NostrProfile from NDK's Metadata
   static NostrProfile fromMetadata(Metadata metadata) {
     return NostrProfile(
-      pubkey: metadata.pubkey,
+      pubkey: metadata.pubKey,
       name: metadata.name,
       displayName: metadata.displayName,
       picture: metadata.picture,
@@ -63,7 +65,7 @@ extension NostrProfileAdapter on NostrProfile {
       nip05: metadata.nip05,
       lud16: metadata.lud16,
       lud06: metadata.lud06,
-      lastUpdated: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      lastUpdated: metadata.updatedAt ?? DateTime.now().millisecondsSinceEpoch ~/ 1000,
     );
   }
 
@@ -74,24 +76,39 @@ extension NostrProfileAdapter on NostrProfile {
     }
 
     try {
-      final metadata = Metadata.fromNip01Event(event);
+      // Parse content as JSON
+      final content = jsonDecode(event.content) as Map<String, dynamic>;
+      
+      // Create Metadata object from parsed content
+      final metadata = Metadata.fromJson(content);
+      metadata.pubKey = event.pubKey;
+      metadata.updatedAt = event.createdAt;
+      
       return fromMetadata(metadata);
     } catch (e) {
-      // Fallback to manual parsing if NDK parsing fails
-      final content = jsonDecode(event.content) as Map<String, dynamic>;
-      return NostrProfile(
-        pubkey: event.pubkey,
-        name: content['name'] as String?,
-        displayName: content['display_name'] as String?,
-        picture: content['picture'] as String?,
-        banner: content['banner'] as String?,
-        about: content['about'] as String?,
-        website: content['website'] as String?,
-        nip05: content['nip05'] as String?,
-        lud16: content['lud16'] as String?,
-        lud06: content['lud06'] as String?,
-        lastUpdated: event.createdAt,
-      );
+      // Fallback to manual parsing if JSON parsing fails
+      try {
+        final content = jsonDecode(event.content) as Map<String, dynamic>;
+        return NostrProfile(
+          pubkey: event.pubKey,
+          name: content['name'] as String?,
+          displayName: content['display_name'] as String?,
+          picture: content['picture'] as String?,
+          banner: content['banner'] as String?,
+          about: content['about'] as String?,
+          website: content['website'] as String?,
+          nip05: content['nip05'] as String?,
+          lud16: content['lud16'] as String?,
+          lud06: content['lud06'] as String?,
+          lastUpdated: event.createdAt,
+        );
+      } catch (e) {
+        // If all else fails, return minimal profile
+        return NostrProfile(
+          pubkey: event.pubKey,
+          lastUpdated: event.createdAt,
+        );
+      }
     }
   }
 }
@@ -100,88 +117,85 @@ extension NostrProfileAdapter on NostrProfile {
 extension ContactListAdapter on ContactList {
   /// Get list of followed pubkeys
   List<String> get followedPubkeys {
-    return contacts.map((contact) => contact.pubkey).toList();
+    return contacts;
   }
 
   /// Check if a pubkey is in the contact list
   bool isFollowing(String pubkey) {
-    return contacts.any((contact) => contact.pubkey == pubkey);
+    return contacts.contains(pubkey);
   }
 
   /// Add a contact to the list
-  ContactList addContact(String pubkey, {String? relay, String? petname}) {
-    final newContact = Contact(
-      pubkey: pubkey,
-      relay: relay,
-      petname: petname,
-    );
-    
-    final updatedContacts = List<Contact>.from(contacts);
-    // Remove if already exists
-    updatedContacts.removeWhere((c) => c.pubkey == pubkey);
-    // Add new contact
-    updatedContacts.add(newContact);
+  ContactList addContact(String pubkey) {
+    final updatedContacts = List<String>.from(contacts);
+    // Add if not already exists
+    if (!updatedContacts.contains(pubkey)) {
+      updatedContacts.add(pubkey);
+    }
     
     return ContactList(
-      pubkey: this.pubkey,
+      pubKey: this.pubKey,
       contacts: updatedContacts,
-      createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
     );
   }
 
   /// Remove a contact from the list
   ContactList removeContact(String pubkey) {
-    final updatedContacts = List<Contact>.from(contacts)
-      ..removeWhere((c) => c.pubkey == pubkey);
+    final updatedContacts = List<String>.from(contacts)
+      ..remove(pubkey);
     
     return ContactList(
-      pubkey: this.pubkey,
+      pubKey: this.pubKey,
       contacts: updatedContacts,
-      createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
     );
   }
 
   /// Convert to Nostr event for publishing
   Nip01Event toEvent(EventSigner signer) {
-    final tags = contacts.map((contact) {
-      final tag = ['p', contact.pubkey];
-      if (contact.relay != null) tag.add(contact.relay!);
-      if (contact.petname != null) tag.add(contact.petname!);
-      return tag;
-    }).toList();
+    // Build tags from contacts with relays if available
+    final tags = <List<String>>[];
+    
+    // Add p tags for contacts
+    for (int i = 0; i < contacts.length; i++) {
+      final tag = ['p', contacts[i]];
+      
+      // Add relay if available
+      if (i < contactRelays.length && contactRelays[i].isNotEmpty) {
+        tag.add(contactRelays[i]);
+        
+        // Add petname if available  
+        if (i < petnames.length && petnames[i].isNotEmpty) {
+          tag.add(petnames[i]);
+        }
+      }
+      
+      tags.add(tag);
+    }
+    
+    // Add followed tags
+    for (final tagName in followedTags) {
+      tags.add(['t', tagName]);
+    }
+    
+    // Add followed communities
+    for (final id in followedCommunities) {
+      tags.add(['a', id]);
+    }
+    
+    // Add followed events
+    for (final id in followedEvents) {
+      tags.add(['e', id]);
+    }
 
     final unsignedEvent = Nip01Event(
-      pubkey: pubkey,
+      pubKey: pubKey,
       createdAt: createdAt,
       kind: 3, // Contact list kind
       tags: tags,
-      content: '', // Contact lists have empty content
+      content: '', // Contact lists typically have empty content
     );
 
-    return signer.sign(unsignedEvent);
-  }
-}
-
-/// Helper class to handle relay recommendations
-class RelayRecommendation {
-  final String url;
-  final ReadWriteMarker marker;
-
-  RelayRecommendation({
-    required this.url,
-    required this.marker,
-  });
-
-  static List<RelayRecommendation> fromUserRelayList(UserRelayList relayList) {
-    final recommendations = <RelayRecommendation>[];
-    
-    for (final entry in relayList.relays.entries) {
-      recommendations.add(RelayRecommendation(
-        url: entry.key,
-        marker: entry.value,
-      ));
-    }
-    
-    return recommendations;
+    // Return the unsigned event - the caller should sign it
+    return unsignedEvent;
   }
 }
