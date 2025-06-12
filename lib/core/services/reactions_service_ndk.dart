@@ -43,16 +43,16 @@ class ReactionsServiceNdk {
       );
 
       // Sign and publish
-      final signedEvent = await _signer.sign(event);
-      await _ndkService.publishEvent(signedEvent);
+      await _signer.sign(event);
+      await _ndkService.publishEvent(event);
 
       // Update cache
       final reactionObj = Reaction(
-        id: signedEvent.id,
+        id: event.id,
         pubKey: userPubkey,
         eventId: eventId,
         reaction: reaction,
-        createdAt: signedEvent.createdAt,
+        createdAt: event.createdAt,
       );
       
       _addToCache(eventId, reactionObj);
@@ -88,8 +88,8 @@ class ReactionsServiceNdk {
       );
 
       // Sign and publish
-      final signedEvent = await _signer.sign(event);
-      await _ndkService.publishEvent(signedEvent);
+      await _signer.sign(event);
+      await _ndkService.publishEvent(event);
 
       _logger.info('Removed reaction $reactionEventId');
     } catch (e) {
@@ -116,7 +116,7 @@ class ReactionsServiceNdk {
       await for (final event in _ndkService.queryEvents([filter])) {
         final reaction = Reaction(
           id: event.id,
-          pubkey: event.pubKey,
+          pubKey: event.pubKey,
           eventId: eventId,
           reaction: event.content,
           createdAt: event.createdAt,
@@ -143,7 +143,7 @@ class ReactionsServiceNdk {
     return _ndkService.subscribeToEvents([filter]).map((event) {
       final reaction = Reaction(
         id: event.id,
-        pubkey: event.pubkey,
+        pubKey: event.pubKey,
         eventId: eventId,
         reaction: event.content,
         createdAt: event.createdAt,

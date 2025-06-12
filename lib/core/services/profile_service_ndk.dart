@@ -217,7 +217,7 @@ class ProfileServiceNdk {
       }
 
       // Create and publish the event
-      final event = contactList.toEvent(_signer);
+      final event = contactList.toEvent();
       await _signer.sign(event);
       await _ndkService.publishEvent(event);
 
