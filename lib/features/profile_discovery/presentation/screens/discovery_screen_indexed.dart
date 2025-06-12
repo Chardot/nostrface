@@ -65,19 +65,27 @@ class _DiscoveryScreenIndexedState extends ConsumerState<DiscoveryScreenIndexed>
     // Get the buffer service
     final bufferService = ref.read(profileBufferServiceIndexedProvider);
     
-    // Check if already has profiles
-    if (bufferService.hasLoadedProfiles && bufferService.currentProfiles.isNotEmpty) {
+    // Load initial profiles from buffer using getNextProfile
+    final initialProfiles = <NostrProfile>[];
+    for (int i = 0; i < 5; i++) {
+      final profile = bufferService.getNextProfile();
+      if (profile != null) {
+        initialProfiles.add(profile);
+      }
+    }
+    
+    if (initialProfiles.isNotEmpty) {
       if (kDebugMode) {
-        print('[Discovery] Buffer has ${bufferService.currentProfiles.length} profiles ready');
+        print('[Discovery] Got ${initialProfiles.length} initial profiles from buffer');
       }
       setState(() {
-        _displayProfiles = bufferService.currentProfiles.take(5).toList();
+        _displayProfiles = initialProfiles;
       });
     } else {
       if (kDebugMode) {
-        print('[Discovery] Buffer not ready yet, waiting for profiles...');
+        print('[Discovery] No profiles available yet, waiting for buffer to load...');
       }
-      // Wait for initial load - the stream will update us
+      // The stream watcher in build() will update us when profiles arrive
     }
   }
 
@@ -223,15 +231,26 @@ class _DiscoveryScreenIndexedState extends ConsumerState<DiscoveryScreenIndexed>
       if (kDebugMode) {
         print('[Discovery] Buffer stream data: ${profiles.length} profiles, _displayProfiles: ${_displayProfiles.length}');
       }
-      if (profiles.isNotEmpty && _displayProfiles.isEmpty && mounted) {
+      // If we don't have any display profiles and buffer has some, grab them
+      if (_displayProfiles.isEmpty && profiles.isNotEmpty && mounted) {
         if (kDebugMode) {
-          print('[Discovery] Updating display profiles from stream: ${profiles.take(5).map((p) => p.displayNameOrName).toList()}');
+          print('[Discovery] No display profiles, fetching from buffer...');
         }
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            setState(() {
-              _displayProfiles = profiles.take(5).toList();
-            });
+            final bufferService = ref.read(profileBufferServiceIndexedProvider);
+            final newProfiles = <NostrProfile>[];
+            for (int i = 0; i < 5; i++) {
+              final profile = bufferService.getNextProfile();
+              if (profile != null) {
+                newProfiles.add(profile);
+              }
+            }
+            if (newProfiles.isNotEmpty) {
+              setState(() {
+                _displayProfiles = newProfiles;
+              });
+            }
           }
         });
       }
@@ -382,58 +401,31 @@ class _DiscoveryScreenIndexedState extends ConsumerState<DiscoveryScreenIndexed>
             // Bottom action panel
             Container(
               padding: const EdgeInsets.all(16),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      const Text(
-                        'Swipe Direction Indicators',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          _buildIndicator(
-                            Icons.close,
-                            'Left',
-                            Colors.red,
-                            'Nope',
-                            () => _handleButtonSwipe(CardSwiperDirection.left),
-                          ),
-                          _buildIndicator(
-                            Icons.favorite,
-                            'Right',
-                            Colors.green,
-                            'Like',
-                            () => _handleButtonSwipe(CardSwiperDirection.right),
-                          ),
-                          _buildIndicator(
-                            Icons.star,
-                            'Up',
-                            Colors.blue,
-                            'Super Like',
-                            () => _handleButtonSwipe(CardSwiperDirection.top),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      if (_swipeHistory.isNotEmpty)
-                        TextButton.icon(
-                          onPressed: _handleUndo,
-                          icon: const Icon(Icons.undo, size: 20),
-                          label: const Text('Undo'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.orange,
-                          ),
-                        ),
-                    ],
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildActionButton(
+                    Icons.close,
+                    Colors.red,
+                    () => _handleButtonSwipe(CardSwiperDirection.left),
                   ),
-                ),
+                  _buildActionButton(
+                    Icons.favorite,
+                    Colors.green,
+                    () => _handleButtonSwipe(CardSwiperDirection.right),
+                  ),
+                  _buildActionButton(
+                    Icons.star,
+                    Colors.blue,
+                    () => _handleButtonSwipe(CardSwiperDirection.top),
+                  ),
+                  if (_swipeHistory.isNotEmpty)
+                    _buildActionButton(
+                      Icons.undo,
+                      Colors.orange,
+                      _handleUndo,
+                    ),
+                ],
               ),
             ),
           ],
@@ -442,37 +434,27 @@ class _DiscoveryScreenIndexedState extends ConsumerState<DiscoveryScreenIndexed>
     );
   }
 
-  Widget _buildIndicator(
+  Widget _buildActionButton(
     IconData icon,
-    String direction,
     Color color,
-    String label,
     VoidCallback onTap,
   ) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 32),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            Text(
-              direction,
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.grey,
-              ),
-            ),
-          ],
+    return Material(
+      color: color,
+      elevation: 4,
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          child: Icon(
+            icon,
+            color: Colors.white,
+            size: 28,
+          ),
         ),
       ),
     );

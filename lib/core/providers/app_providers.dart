@@ -52,7 +52,7 @@ final profileBufferServiceIndexedProvider = Provider<ProfileBufferServiceIndexed
   final profileService = ref.watch(profileServiceV2Provider);
   final discardedService = ref.watch(discardedProfilesServiceProvider);
   final failedImagesService = ref.watch(failedImagesServiceProvider);
-  return ProfileBufferServiceIndexed(profileService, discardedService, failedImagesService);
+  return ProfileBufferServiceIndexed(profileService, discardedService, failedImagesService, ref);
 });
 
 /// Stream provider for indexed buffered profiles
@@ -66,3 +66,5 @@ final indexedBufferLoadingProvider = StreamProvider<bool>((ref) {
   final bufferService = ref.watch(profileBufferServiceIndexedProvider);
   return bufferService.loadingStream;
 });
+
+final trendingProfileCacheProvider = StateProvider<Map<String, NostrProfile>>((ref) => {});

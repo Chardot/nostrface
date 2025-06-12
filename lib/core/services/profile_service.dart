@@ -1248,6 +1248,11 @@ final profileServiceProvider = Provider<ProfileService>((ref) {
 
 
 final profileProvider = FutureProvider.family<NostrProfile?, String>((ref, pubkey) async {
+  // Check trending profile cache first
+  final trendingCache = ref.read(trendingProfileCacheProvider);
+  if (trendingCache.containsKey(pubkey)) {
+    return trendingCache[pubkey];
+  }
   final profileService = ref.watch(profileServiceProvider);
   return await profileService.getProfile(pubkey);
 });
